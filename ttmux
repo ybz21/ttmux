@@ -533,7 +533,7 @@ TTMUX_AGENT_MARKER=".ttmux-agent"  # 标记文件，放在 session 数据里
 
 _agent_defaults() {
     AGENT_CLAUDE_BIN="${AGENT_CLAUDE_BIN:-$(command -v claude)}"
-    AGENT_PERMISSION="${AGENT_PERMISSION:-auto}"   # default, auto, plan, bypassPermissions
+    AGENT_PERMISSION="${AGENT_PERMISSION:-dangerously-skip-permissions}"
     AGENT_MODEL="${AGENT_MODEL:-}"
     AGENT_WORKDIR="${AGENT_WORKDIR:-$(pwd)}"
     AGENT_MAX_TURNS="${AGENT_MAX_TURNS:-}"
@@ -545,7 +545,11 @@ _agent_claude_cmd() {
     _agent_defaults
     local cmd="cd '${AGENT_WORKDIR}' && ${AGENT_CLAUDE_BIN} -p"
     [[ -n "$AGENT_MODEL" ]] && cmd+=" --model ${AGENT_MODEL}"
-    [[ -n "$AGENT_PERMISSION" ]] && cmd+=" --permission-mode ${AGENT_PERMISSION}"
+    if [[ "$AGENT_PERMISSION" == "dangerously-skip-permissions" ]]; then
+        cmd+=" --dangerously-skip-permissions"
+    else
+        cmd+=" --permission-mode ${AGENT_PERMISSION}"
+    fi
     [[ -n "$AGENT_MAX_TURNS" ]] && cmd+=" --max-turns ${AGENT_MAX_TURNS}"
     cmd+=" --output-format text"
     # 使用 heredoc 传入任务，避免引号转义问题
