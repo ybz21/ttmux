@@ -78,3 +78,27 @@ tmux send-keys -t <session> 2
 ```
 
 但只在确认 session 的工作方向正确时才这样做。
+
+## 非审批类阻塞
+
+除了权限审批，session 还会被其他提示卡住：
+
+### 评分提示
+```
+How is Claude doing this session? (optional)
+  1: Bad    2: Fine   3: Good   0: Dismiss
+```
+直接发 `0` dismiss：
+```bash
+tmux send-keys -t <session> 0
+```
+
+### 待发命令
+prompt `❯` 后有文字但没按 Enter。这通常是：
+- 上一轮 `ttmux send` 发过去了但因为 session 在审批状态没处理
+- 用户手动输入了但忘了按回车
+
+判断文字内容合理后：
+```bash
+tmux send-keys -t <session> Enter
+```
