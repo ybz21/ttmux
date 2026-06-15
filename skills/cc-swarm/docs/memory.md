@@ -1,11 +1,11 @@
 # Session 记忆 (memory)
 
-Father 为每个被管理的 session 维护一个记忆文件，持久化跨巡检轮次的上下文。
+cc-swarm 为每个被管理的 session 维护一个记忆文件，持久化跨巡检轮次的上下文。
 
 ## 存储位置
 
 ```
-~/.local/share/ttmux/father/
+~/.local/share/ttmux/cc-swarm/
   cc-oauth.md
   cc-回测.md
   cc-数据.md
@@ -30,9 +30,9 @@ coding | testing | reviewing | fixing | done
 ## 时间线
 - [HH:MM] 开始：xxx 功能开发
 - [HH:MM] 完成开发，idle
-- [HH:MM] father: 发送测试指令 — "写 pytest 覆盖..."
+- [HH:MM] cc-swarm: 发送测试指令 — "写 pytest 覆盖..."
 - [HH:MM] 测试完成，7 case 全过
-- [HH:MM] father: 发送架构 challenge — 3个问题（fallback重复/限流硬编码/能力矩阵）
+- [HH:MM] cc-swarm: 发送架构 challenge — 3个问题（fallback重复/限流硬编码/能力矩阵）
 - [HH:MM] 修正中...
 - [HH:MM] 修正完成
 
@@ -93,11 +93,11 @@ coding → testing → reviewing → fixing → done
   └───────────────────────────────┘  (review 发现新问题)
 ```
 
-| 阶段 | 含义 | Father 行为 |
+| 阶段 | 含义 | cc-swarm 行为 |
 |------|------|------------|
 | coding | 正在开发功能 | 审批，不干预 |
 | testing | 在写/跑测试 | 审批，等结果 |
-| reviewing | Father 在 review 它的代码 | 发 challenge |
+| reviewing | cc-swarm 在 review 它的代码 | 发 challenge |
 | fixing | 在修 review 发现的问题 | 审批，等完成 |
 | done | 全部完成 | 不再发指令 |
 
@@ -105,5 +105,5 @@ coding → testing → reviewing → fixing → done
 
 - **不要让记忆文件无限增长** — 时间线超过 20 条时，压缩早期条目
 - **session 被 kill 后** — 记忆文件保留（有历史价值），但标记阶段为 done
-- **新对话启动 father** — 读取已有记忆文件，恢复上下文
+- **新对话启动 cc-swarm** — 读取已有记忆文件，恢复上下文
 - **记忆和 capture 冲突时** — 以 capture（实际状态）为准，更新记忆

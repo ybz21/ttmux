@@ -3,17 +3,22 @@
 # ttmux - AI-native tmux wrapper
 # https://github.com/ybz21/ttmux
 #
+# ⚠ 本文件由 ttmux-cli/build.sh 自动生成，请勿直接编辑。
+#   改 ttmux-cli/lib/*.sh 后运行 ttmux-cli/build.sh 重新生成。
+#
 
 set -euo pipefail
 
-TTMUX_VERSION="0.3.0"
+TTMUX_VERSION="0.4.0"
 TMUX_BIN="$(command -v tmux)"
 TTMUX_DATA="${TTMUX_DATA:-${HOME}/.local/share/ttmux}"
 TTMUX_LOGS="${TTMUX_DATA}/logs"
 TTMUX_GROUPS="${TTMUX_DATA}/groups"
 TTMUX_ENV="${TTMUX_DATA}/env"
+TTMUX_META="${TTMUX_DATA}/meta"
+TTMUX_SWARMS="${TTMUX_DATA}/swarms"
 
-mkdir -p "$TTMUX_LOGS" "$TTMUX_GROUPS"
+mkdir -p "$TTMUX_LOGS" "$TTMUX_GROUPS" "$TTMUX_META" "$TTMUX_SWARMS"
 
 # ── 颜色 ──
 bold=$'\033[1m'
@@ -214,6 +219,23 @@ _env_clear() {
     msg_ok "全局环境变量已清空"
 }
 
+_env_list_json() {
+    echo -n '['
+    local first=true
+    if [[ -f "$TTMUX_ENV" ]] && [[ -s "$TTMUX_ENV" ]]; then
+        while IFS= read -r line; do
+            [[ -n "$line" && ! "$line" =~ ^# ]] || continue
+            local key="${line%%=*}" val="${line#*=}"
+            [[ "$first" == true ]] || echo -n ','
+            first=false
+            printf '{"key":%s,"value":%s}' \
+                "$(printf '%s' "$key" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))')" \
+                "$(printf '%s' "$val" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))')"
+        done < "$TTMUX_ENV"
+    fi
+    echo ']'
+}
+
 # 向所有已有 session 推送当前 env
 _env_push() {
     local sessions
@@ -256,6 +278,45 @@ _group_add_session() {
     echo "$session" >> "$(_group_file "$group")"
 }
 
+# ── 任务元数据 (统一 cmd / agent) ──
+# 每个任务 session 一份元数据，记录类型与描述，
+# 使 status / collect / kill 对命令任务和 Agent 任务走同一条路径。
+
+_task_meta_dir() {
+    echo "${TTMUX_META}/${1}"
+}
+
+# $1 sess  $2 type(cmd|agent)  $3 desc(命令或任务)  $4 workdir
+_task_write_meta() {
+    local dir
+    dir=$(_task_meta_dir "$1")
+    mkdir -p "$dir"
+    echo "$2" > "${dir}/type.txt"
+    printf '%s\n' "$3" > "${dir}/desc.txt"
+    printf '%s\n' "$4" > "${dir}/workdir.txt"
+    date '+%Y-%m-%d %H:%M:%S' > "${dir}/started.txt"
+}
+
+_task_type() {
+    local f
+    f="$(_task_meta_dir "$1")/type.txt"
+    if [[ -f "$f" ]]; then head -1 "$f"; else echo "cmd"; fi
+}
+
+_task_desc() {
+    local f
+    f="$(_task_meta_dir "$1")/desc.txt"
+    if [[ -f "$f" ]]; then cat "$f"; return 0; fi
+    # 向后兼容旧版 agent 元数据
+    f="${TTMUX_DATA}/agents/${1}/task.txt"
+    if [[ -f "$f" ]]; then cat "$f"; return 0; fi
+    return 0
+}
+
+_task_clean_meta() {
+    rm -rf "$(_task_meta_dir "$1")" "${TTMUX_DATA}/agents/${1}" 2>/dev/null || true
+}
+
 _group_list() {
     local groups=()
     shopt -s nullglob
@@ -293,47 +354,98 @@ _group_list() {
     echo ""
 }
 
-_group_status() {
+_group_list_json() {
+    echo -n '['
+    local first=true
+    shopt -s nullglob
+    for f in "${TTMUX_GROUPS}"/*.group; do
+        local name total=0 alive=0
+        name=$(basename "$f" .group)
+        while IFS= read -r sess; do
+            [[ -n "$sess" ]] || continue
+            ((total++)) || true
+            _session_exists "$sess" && ((alive++)) || true
+        done < <(_group_sessions "$name")
+        local st="done"
+        if [[ $alive -eq $total && $total -gt 0 ]]; then
+            st="running"
+        elif [[ $alive -gt 0 ]]; then
+            st="partial"
+        fi
+        [[ "$first" == true ]] || echo -n ','
+        first=false
+        printf '{"group":"%s","total":%d,"alive":%d,"status":"%s"}' "$name" "$total" "$alive" "$st"
+    done
+    echo ']'
+}
+
+_info_json() {
+    local sess_count group_count tmux_ver
+    sess_count=$(_session_count | tr -d '[:space:]')
+    shopt -s nullglob
+    local gf=("${TTMUX_GROUPS}"/*.group)
+    group_count=${#gf[@]}
+    tmux_ver=$("$TMUX_BIN" -V 2>/dev/null | awk '{print $2}')
+    printf '{"version":"%s","tmux_version":"%s","data_dir":"%s","sessions":%s,"groups":%d}\n' \
+        "$TTMUX_VERSION" "$tmux_ver" "$TTMUX_DATA" "${sess_count:-0}" "$group_count"
+}
+
+# 统一状态：命令任务与 Agent 任务同一渲染路径，Agent 行额外标注类型与任务摘要
+_status() {
     local group="$1"
     if ! _group_exists "$group"; then
         msg_err "任务组 ${bold}${group}${reset} 不存在"
         return 1
     fi
     echo ""
-    echo -e "   ${icon_group} ${bold}${group}${reset} 任务状态"
-    echo -e "   ${dim}$(printf '─%.0s' {1..40})${reset}"
+    echo -e "  ${icon_group} ${bold}${group}${reset} 状态"
+    echo -e "  ${dim}$(printf '─%.0s' {1..50})${reset}"
     echo ""
+    local running=0 n_done=0 failed=0 total=0
     while IFS= read -r sess; do
         [[ -n "$sess" ]] || continue
+        ((total++)) || true
+        local type desc tag
+        type=$(_task_type "$sess")
+        desc=$(_task_desc "$sess")
+        desc="${desc%%$'\n'*}"   # 仅取首行，避免 pipefail 下的 SIGPIPE
+        desc="${desc:0:50}"
+        if [[ "$type" == "agent" ]]; then tag="${magenta}[agent]${reset}"; else tag="${dim}[cmd]${reset}"; fi
         if _session_exists "$sess"; then
-            local proc
+            local proc dead
             proc=$("$TMUX_BIN" display-message -t "$sess" -p '#{pane_current_command}' 2>/dev/null || echo "?")
-            local dead
             dead=$("$TMUX_BIN" display-message -t "$sess" -p '#{pane_dead}' 2>/dev/null || echo "0")
             if [[ "$dead" == "1" ]]; then
                 local exit_code
                 exit_code=$("$TMUX_BIN" display-message -t "$sess" -p '#{pane_dead_status}' 2>/dev/null || echo "?")
                 if [[ "$exit_code" == "0" ]]; then
-                    echo -e "   ${green}${icon_ok}${reset} ${bold}${sess}${reset}  ${green}完成${reset} (exit 0)"
+                    echo -e "  ${green}${icon_ok}${reset} ${bold}${sess}${reset} ${tag} ${green}完成${reset} (exit 0)"
+                    ((n_done++)) || true
                 else
-                    echo -e "   ${red}${icon_err}${reset} ${bold}${sess}${reset}  ${red}失败${reset} (exit ${exit_code})"
+                    echo -e "  ${red}${icon_err}${reset} ${bold}${sess}${reset} ${tag} ${red}失败${reset} (exit ${exit_code})"
+                    ((failed++)) || true
                 fi
             else
-                echo -e "   ${yellow}${icon_run}${reset} ${bold}${sess}${reset}  ${yellow}运行中${reset}  ${dim}[${proc}]${reset}"
+                echo -e "  ${yellow}${icon_run}${reset} ${bold}${sess}${reset} ${tag} ${yellow}运行中${reset}  ${dim}[${proc}]${reset}"
+                ((running++)) || true
             fi
         else
             local logfile="${TTMUX_LOGS}/${sess}.log"
             if [[ -f "$logfile" ]]; then
-                echo -e "   ${green}${icon_done}${reset} ${bold}${sess}${reset}  ${dim}已结束 (日志可用)${reset}"
+                echo -e "  ${green}${icon_done}${reset} ${bold}${sess}${reset} ${tag} ${dim}已结束 (日志可用)${reset}"
             else
-                echo -e "   ${dim}${icon_done}${reset} ${bold}${sess}${reset}  ${dim}已结束${reset}"
+                echo -e "  ${dim}${icon_done}${reset} ${bold}${sess}${reset} ${tag} ${dim}已结束${reset}"
             fi
+            ((n_done++)) || true
         fi
+        [[ -n "$desc" ]] && echo -e "     ${dim}↳ ${desc}${reset}"
     done < <(_group_sessions "$group")
+    echo ""
+    echo -e "  ${dim}共 ${total} 个任务:  ${green}完成 ${n_done}${reset}  ${yellow}运行 ${running}${reset}  ${red}失败 ${failed}${reset}"
     echo ""
 }
 
-_group_status_json() {
+_status_json() {
     local group="$1"
     if ! _group_exists "$group"; then
         echo '{"error":"group not found"}'
@@ -345,7 +457,9 @@ _group_status_json() {
         [[ -n "$sess" ]] || continue
         [[ "$first" == true ]] || echo ","
         first=false
-        local status="exited" proc="" exit_code=""
+        local status="exited" proc="" exit_code="" type desc_json
+        type=$(_task_type "$sess")
+        desc_json=$(_task_desc "$sess" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read().strip()))' 2>/dev/null || echo '""')
         if _session_exists "$sess"; then
             proc=$("$TMUX_BIN" display-message -t "$sess" -p '#{pane_current_command}' 2>/dev/null || echo "")
             local dead
@@ -357,8 +471,8 @@ _group_status_json() {
                 status="running"
             fi
         fi
-        printf '  {"name":"%s","status":"%s","process":"%s","exit_code":"%s"}' \
-            "$sess" "$status" "$proc" "$exit_code"
+        printf '  {"name":"%s","type":"%s","status":"%s","process":"%s","exit_code":"%s","task":%s}' \
+            "$sess" "$type" "$status" "$proc" "$exit_code" "$desc_json"
     done < <(_group_sessions "$group")
     echo ""
     echo ']}'
@@ -367,6 +481,36 @@ _group_status_json() {
 # ══════════════════════════════════════════
 # ── spawn: 批量创建任务 ──
 # ══════════════════════════════════════════
+
+# 创建单个任务 session（cmd 与 agent 的统一底层）
+# $1 group  $2 name  $3 type(cmd|agent)  $4 payload(命令或任务)  $5 workdir
+# 成功返回 0，已存在跳过返回 1
+_spawn_one() {
+    local group="$1" name="$2" type="$3" payload="$4" workdir="${5:-$(pwd)}"
+    local sess_name="${group}-${name}"
+    if _session_exists "$sess_name"; then
+        msg_warn "会话 ${bold}${sess_name}${reset} 已存在，跳过"
+        return 1
+    fi
+    local width=200
+    [[ "$type" == "agent" ]] && width=220
+    # 创建 detached session，注入 env，开启日志
+    "$TMUX_BIN" new-session -d -s "$sess_name" -x "$width" -y 50
+    _inject_env "$sess_name"
+    "$TMUX_BIN" pipe-pane -t "$sess_name" -o "cat >> '${TTMUX_LOGS}/${sess_name}.log'"
+    : > "${TTMUX_LOGS}/${sess_name}.log"
+    _task_write_meta "$sess_name" "$type" "$payload" "$workdir"
+
+    local run_cmd
+    if [[ "$type" == "agent" ]]; then
+        run_cmd=$(_agent_claude_cmd "$payload")
+    else
+        run_cmd="$payload"
+    fi
+    "$TMUX_BIN" send-keys -t "$sess_name" "$run_cmd" C-m
+    _group_add_session "$group" "$sess_name"
+    return 0
+}
 
 _do_spawn() {
     local group="$1"
@@ -380,22 +524,10 @@ _do_spawn() {
     while [[ $# -ge 2 ]]; do
         local name="$1" cmd="$2"
         shift 2
-
-        local sess_name="${group}-${name}"
-        if _session_exists "$sess_name"; then
-            msg_warn "会话 ${bold}${sess_name}${reset} 已存在，跳过"
-            continue
+        if _spawn_one "$group" "$name" "cmd" "$cmd" "$(pwd)"; then
+            ((count++)) || true
+            msg_ok "启动 ${bold}${group}-${name}${reset}: ${dim}${cmd}${reset}"
         fi
-
-        # 创建 detached session，注入 env，开启日志，发送命令
-        "$TMUX_BIN" new-session -d -s "$sess_name" -x 200 -y 50
-        _inject_env "$sess_name"
-        "$TMUX_BIN" pipe-pane -t "$sess_name" -o "cat >> '${TTMUX_LOGS}/${sess_name}.log'"
-        "$TMUX_BIN" send-keys -t "$sess_name" "$cmd" C-m
-
-        _group_add_session "$group" "$sess_name"
-        ((count++)) || true
-        msg_ok "启动 ${bold}${sess_name}${reset}: ${dim}${cmd}${reset}"
     done
 
     if [[ $# -eq 1 ]]; then
@@ -494,7 +626,8 @@ _do_wait_group() {
 # ── collect: 收集输出 ──
 # ══════════════════════════════════════════
 
-_do_collect() {
+# 统一收集：命令任务与 Agent 任务同一路径，优先读日志，带任务描述
+_collect() {
     local group="$1"
     local format="${2:-text}"
     if ! _group_exists "$group"; then
@@ -509,17 +642,34 @@ _do_collect() {
             [[ -n "$sess" ]] || continue
             [[ "$first" == true ]] || echo ","
             first=false
-            local output=""
-            output=$(_do_capture "$sess" 100 2>/dev/null | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')
-            printf '  {"task":"%s","output":%s}' "$sess" "$output"
+            local type task_json output
+            type=$(_task_type "$sess")
+            task_json=$(_task_desc "$sess" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')
+            local logfile="${TTMUX_LOGS}/${sess}.log"
+            if [[ -f "$logfile" ]]; then
+                output=$(tail -200 "$logfile" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')
+            else
+                output=$(_do_capture "$sess" 200 2>/dev/null | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')
+            fi
+            printf '  {"task":"%s","type":"%s","prompt":%s,"output":%s}' "$sess" "$type" "$task_json" "$output"
         done < <(_group_sessions "$group")
         echo ""
         echo ']}'
     else
         while IFS= read -r sess; do
             [[ -n "$sess" ]] || continue
-            echo -e "\n${bold}━━━ ${sess} ━━━${reset}"
-            _do_capture "$sess" 50 2>/dev/null || echo "(无输出)"
+            local desc
+            desc=$(_task_desc "$sess")
+            echo ""
+            echo -e "  ${bold}━━━ ${sess} ━━━${reset}"
+            [[ -n "$desc" ]] && echo -e "  ${dim}任务: ${desc}${reset}"
+            echo -e "  ${dim}$(printf '─%.0s' {1..50})${reset}"
+            local logfile="${TTMUX_LOGS}/${sess}.log"
+            if [[ -f "$logfile" ]] && [[ -s "$logfile" ]]; then
+                tail -50 "$logfile"
+            else
+                _do_capture "$sess" 50 2>/dev/null || echo "  (无输出)"
+            fi
         done < <(_group_sessions "$group")
         echo ""
     fi
@@ -592,7 +742,7 @@ _agent_spawn() {
         return 1
     fi
 
-    # 导出给子函数
+    # 导出给 _agent_claude_cmd / _spawn_one 使用
     AGENT_WORKDIR="$workdir"
     AGENT_MODEL="$model"
     AGENT_PERMISSION="$permission"
@@ -604,113 +754,25 @@ _agent_spawn() {
         local name="${pairs[$i]}"
         local task="${pairs[$((i+1))]}"
         i=$((i+2))
-
-        local sess_name="${group}-${name}"
-        if _session_exists "$sess_name"; then
-            msg_warn "会话 ${bold}${sess_name}${reset} 已存在，跳过"
-            continue
+        if _spawn_one "$group" "$name" "agent" "$task" "$workdir"; then
+            ((count++)) || true
+            local suffix=""
+            (( ${#task} > 60 )) && suffix="..." || true
+            msg_ok "Agent ${bold}${name}${reset}: ${dim}${task:0:60}${suffix}${reset}"
         fi
-
-        local claude_cmd
-        claude_cmd=$(_agent_claude_cmd "$task")
-
-        # 创建 session，注入 env，开启日志
-        "$TMUX_BIN" new-session -d -s "$sess_name" -x 220 -y 50
-        _inject_env "$sess_name"
-        "$TMUX_BIN" pipe-pane -t "$sess_name" -o "cat >> '${TTMUX_LOGS}/${sess_name}.log'"
-
-        # 清空旧日志
-        : > "${TTMUX_LOGS}/${sess_name}.log"
-
-        # 写入 agent 元数据
-        local meta_dir="${TTMUX_DATA}/agents/${sess_name}"
-        mkdir -p "$meta_dir"
-        echo "$task" > "${meta_dir}/task.txt"
-        echo "$workdir" > "${meta_dir}/workdir.txt"
-        date '+%Y-%m-%d %H:%M:%S' > "${meta_dir}/started.txt"
-
-        # 发送 claude 命令
-        "$TMUX_BIN" send-keys -t "$sess_name" "$claude_cmd" C-m
-
-        _group_add_session "$group" "$sess_name"
-        ((count++)) || true
-        local suffix=""
-        (( ${#task} > 60 )) && suffix="..." || true
-        msg_ok "Agent ${bold}${name}${reset}: ${dim}${task:0:60}${suffix}${reset}"
     done
 
     echo ""
     msg_info "Agent 组 ${bold}${group}${reset} 已启动 ${count} 个 Claude 实例"
     msg_info "工作目录: ${dim}${workdir}${reset}"
     echo ""
-    echo -e "  ${dim}查看状态:  ttmux agent status ${group}${reset}"
+    echo -e "  ${dim}查看状态:  ttmux status ${group}${reset}"
     echo -e "  ${dim}附加查看:  ttmux a ${group}-<名称>${reset}"
-    echo -e "  ${dim}追加指令:  ttmux agent send ${group}-<名称> \"补充指令\"${reset}"
+    echo -e "  ${dim}追加指令:  ttmux send ${group}-<名称> \"补充指令\"${reset}"
 }
 
-# agent 状态（增强版，显示任务摘要）
-_agent_status() {
-    local group="$1"
-    if ! _group_exists "$group"; then
-        msg_err "Agent 组 ${bold}${group}${reset} 不存在"
-        return 1
-    fi
-    echo ""
-    echo -e "  ${magenta}◆${reset} ${bold}Agent 组: ${group}${reset}"
-    echo -e "  ${dim}$(printf '─%.0s' {1..50})${reset}"
-    echo ""
-
-    local running=0 done=0 failed=0 total=0
-    while IFS= read -r sess; do
-        [[ -n "$sess" ]] || continue
-        ((total++)) || true
-
-        # 读取任务描述
-        local task_desc=""
-        local meta_dir="${TTMUX_DATA}/agents/${sess}"
-        [[ -f "${meta_dir}/task.txt" ]] && task_desc=$(head -1 "${meta_dir}/task.txt")
-        task_desc="${task_desc:0:50}"
-
-        if _session_exists "$sess"; then
-            local proc
-            proc=$("$TMUX_BIN" display-message -t "$sess" -p '#{pane_current_command}' 2>/dev/null || echo "?")
-            local dead
-            dead=$("$TMUX_BIN" display-message -t "$sess" -p '#{pane_dead}' 2>/dev/null || echo "0")
-            if [[ "$dead" == "1" ]]; then
-                local exit_code
-                exit_code=$("$TMUX_BIN" display-message -t "$sess" -p '#{pane_dead_status}' 2>/dev/null || echo "?")
-                if [[ "$exit_code" == "0" ]]; then
-                    echo -e "  ${green}${icon_ok}${reset} ${bold}${sess}${reset}  ${green}完成${reset}"
-                    ((done++)) || true
-                else
-                    echo -e "  ${red}${icon_err}${reset} ${bold}${sess}${reset}  ${red}失败${reset} (exit ${exit_code})"
-                    ((failed++)) || true
-                fi
-            else
-                echo -e "  ${yellow}${icon_run}${reset} ${bold}${sess}${reset}  ${yellow}运行中${reset}  ${dim}[${proc}]${reset}"
-                ((running++)) || true
-            fi
-        else
-            # session 已退出，查看日志判断
-            local logfile="${TTMUX_LOGS}/${sess}.log"
-            if [[ -f "$logfile" ]] && [[ -s "$logfile" ]]; then
-                echo -e "  ${green}${icon_done}${reset} ${bold}${sess}${reset}  ${dim}已结束 (日志可用)${reset}"
-                ((done++)) || true
-            else
-                echo -e "  ${dim}${icon_done}${reset} ${bold}${sess}${reset}  ${dim}已结束${reset}"
-                ((done++)) || true
-            fi
-        fi
-        [[ -n "$task_desc" ]] && echo -e "     ${dim}任务: ${task_desc}${reset}"
-    done < <(_group_sessions "$group")
-
-    echo ""
-    echo -e "  ${dim}共 ${total} 个 Agent:  ${green}完成 ${done}${reset}  ${yellow}运行 ${running}${reset}  ${red}失败 ${failed}${reset}"
-    echo ""
-}
-
-# 向运行中的 agent 追加指令
-_agent_send() {
+# 向运行中的任务/agent 追加指令（对任意 session 通用）
+_task_send() {
     local sess="$1"
     shift
     local message="$*"
@@ -750,85 +812,481 @@ _agent_spawn_file() {
     _agent_spawn "${args[@]}"
 }
 
-# 收集 agent 结果（读日志，格式化）
-_agent_collect() {
-    local group="$1"
-    local format="${2:-text}"
-
-    if ! _group_exists "$group"; then
-        msg_err "Agent 组不存在: ${group}"
-        return 1
-    fi
-
-    if [[ "$format" == "json" ]]; then
-        echo '{"group":"'"$group"'","agents":['
-        local first=true
-        while IFS= read -r sess; do
-            [[ -n "$sess" ]] || continue
-            [[ "$first" == true ]] || echo ","
-            first=false
-            local task="" output=""
-            local meta_dir="${TTMUX_DATA}/agents/${sess}"
-            [[ -f "${meta_dir}/task.txt" ]] && task=$(cat "${meta_dir}/task.txt")
-            # 优先从日志读
-            local logfile="${TTMUX_LOGS}/${sess}.log"
-            if [[ -f "$logfile" ]]; then
-                output=$(tail -200 "$logfile" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')
-            else
-                output=$(_do_capture "$sess" 200 2>/dev/null | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')
-            fi
-            local task_escaped
-            task_escaped=$(echo "$task" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '""')
-            printf '  {"agent":"%s","task":%s,"output":%s}' "$sess" "$task_escaped" "$output"
-        done < <(_group_sessions "$group")
-        echo ""
-        echo ']}'
-    else
-        while IFS= read -r sess; do
-            [[ -n "$sess" ]] || continue
-            local task=""
-            local meta_dir="${TTMUX_DATA}/agents/${sess}"
-            [[ -f "${meta_dir}/task.txt" ]] && task=$(cat "${meta_dir}/task.txt")
-            echo ""
-            echo -e "  ${bold}━━━ ${sess} ━━━${reset}"
-            [[ -n "$task" ]] && echo -e "  ${dim}任务: ${task}${reset}"
-            echo -e "  ${dim}$(printf '─%.0s' {1..50})${reset}"
-            local logfile="${TTMUX_LOGS}/${sess}.log"
-            if [[ -f "$logfile" ]] && [[ -s "$logfile" ]]; then
-                tail -50 "$logfile"
-            else
-                _do_capture "$sess" 50 2>/dev/null || echo "  (无输出)"
-            fi
-        done < <(_group_sessions "$group")
-        echo ""
-    fi
-}
-
-# 清理 agent 组
-_agent_kill() {
+# 统一清理任务组：Agent 任务先发 /exit 优雅退出，命令任务直接杀，最后清理元数据
+_kill_group() {
     local group="$1"
     if ! _group_exists "$group"; then
-        msg_err "Agent 组不存在: ${group}"
+        msg_err "任务组不存在: ${group}"
         return 1
     fi
     while IFS= read -r sess; do
         [[ -n "$sess" ]] || continue
         if _session_exists "$sess"; then
-            # 先尝试优雅退出 claude（发 /exit）
-            "$TMUX_BIN" send-keys -t "$sess" "/exit" C-m 2>/dev/null || true
-            sleep 0.5
-            # 如果还在就强杀
+            if [[ "$(_task_type "$sess")" == "agent" ]]; then
+                # 先尝试优雅退出 claude（发 /exit）
+                "$TMUX_BIN" send-keys -t "$sess" "/exit" C-m 2>/dev/null || true
+                sleep 0.5
+            fi
             if _session_exists "$sess"; then
                 "$TMUX_BIN" kill-session -t "$sess" 2>/dev/null || true
             fi
         fi
-        # 清理元数据
-        rm -rf "${TTMUX_DATA}/agents/${sess}" 2>/dev/null || true
+        _task_clean_meta "$sess"
     done < <(_group_sessions "$group")
     rm -f "$(_group_file "$group")"
-    msg_ok "Agent 组 ${bold}${group}${reset} 已清理"
+    msg_ok "任务组 ${bold}${group}${reset} 已清理"
 }
 
+# ══════════════════════════════════════════
+# ── swarm: 蜂群编排 ──
+# ══════════════════════════════════════════
+#
+# 蜂群 = 一个有目标的任务组 + 元数据边车(goal/status/supervisor/deps)。
+# 成员就是底层任务组 <swarm> 的会话(<swarm>-<member>)，
+# 因此复用 _spawn_one / _status / _collect / _kill_group / _group_* 全套机制。
+#
+#   ${TTMUX_SWARMS}/<swarm>/
+#   ├── goal.txt        目标(可空)
+#   ├── status.txt      planning|running|integrating|done|archived
+#   ├── supervisor.txt  指挥的 cc 会话名(可空)
+#   ├── created.txt
+#   └── deps/<member>.txt  依赖的成员名(逗号分隔, 仅有依赖时存在)
+
+_swarm_dir()    { echo "${TTMUX_SWARMS}/${1}"; }
+_swarm_exists() { [[ -d "$(_swarm_dir "$1")" ]]; }
+
+# _swarm_meta_get <swarm> <key>   -> 输出值(无则空)
+_swarm_meta_get() {
+    local f="$(_swarm_dir "$1")/${2}.txt"
+    [[ -f "$f" ]] && cat "$f" || true
+}
+# _swarm_meta_set <swarm> <key> <value>
+_swarm_meta_set() {
+    local dir; dir=$(_swarm_dir "$1")
+    mkdir -p "$dir"
+    printf '%s\n' "$3" > "${dir}/${2}.txt"
+}
+
+# 成员显示名: 去掉 "<swarm>-" 前缀
+_swarm_member_name() {
+    local swarm="$1" sess="$2"
+    echo "${sess#"${swarm}"-}"
+}
+
+# 依赖读写
+_swarm_dep_get() { local f="$(_swarm_dir "$1")/deps/${2}.txt"; [[ -f "$f" ]] && cat "$f" || true; }
+_swarm_dep_set() {
+    local dir="$(_swarm_dir "$1")/deps"
+    mkdir -p "$dir"
+    printf '%s\n' "$3" > "${dir}/${2}.txt"
+}
+
+# ── 命令 ──
+
+# ttmux swarm new <名> [--goal "..."]
+_swarm_new() {
+    local name="$1"; shift || true
+    [[ -n "$name" ]] || { msg_err "用法: ttmux swarm new <名> [--goal \"...\"]"; return 1; }
+    if _swarm_exists "$name"; then
+        msg_warn "蜂群 ${bold}${name}${reset} 已存在"
+        return 1
+    fi
+    local goal=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --goal) goal="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    mkdir -p "$(_swarm_dir "$name")"
+    _swarm_meta_set "$name" goal "$goal"
+    _swarm_meta_set "$name" status "planning"
+    _swarm_meta_set "$name" supervisor ""
+    _swarm_meta_set "$name" created "$(date '+%Y-%m-%d %H:%M:%S')"
+    msg_ok "蜂群 ${bold}${name}${reset} 已创建"
+    [[ -n "$goal" ]] && echo -e "   ${dim}目标: ${goal}${reset}"
+    echo -e "   ${dim}加成员: ttmux swarm add ${name} <名> --type agent \"<任务>\"${reset}"
+}
+
+# ttmux swarm add <群> <成员> [--type task|agent] [--dir/--perm/--model] [--depends-on a,b] <payload...>
+_swarm_add() {
+    local swarm="$1" member="$2"
+    shift 2 2>/dev/null || { msg_err "用法: ttmux swarm add <群> <成员> [--type task|agent] <命令或任务>"; return 1; }
+    if ! _swarm_exists "$swarm"; then
+        msg_err "蜂群不存在: ${swarm}  ${dim}(先 ttmux swarm new ${swarm})${reset}"
+        return 1
+    fi
+    [[ -n "$member" ]] || { msg_err "成员名不能为空"; return 1; }
+
+    local type="agent" workdir model="" perm="" deps="" payload_parts=()
+    _agent_defaults
+    workdir="$AGENT_WORKDIR"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --type)       type="$2"; shift 2 ;;
+            --dir)        workdir="$2"; shift 2 ;;
+            --model)      model="$2"; shift 2 ;;
+            --perm)       perm="$2"; shift 2 ;;
+            --depends-on) deps="$2"; shift 2 ;;
+            *)            payload_parts+=("$1"); shift ;;
+        esac
+    done
+    local payload="${payload_parts[*]}"
+    if [[ -z "$payload" ]]; then
+        msg_err "缺少${type}内容: ${dim}命令(task) 或 任务描述(agent)${reset}"
+        return 1
+    fi
+    if [[ "$type" != "task" && "$type" != "agent" ]]; then
+        msg_err "--type 只能是 task 或 agent"
+        return 1
+    fi
+
+    # agent 成员: 设置 AGENT_* 供 _agent_claude_cmd 使用
+    if [[ "$type" == "agent" ]]; then
+        AGENT_WORKDIR="$workdir"
+        [[ -n "$model" ]] && AGENT_MODEL="$model"
+        [[ -n "$perm" ]]  && AGENT_PERMISSION="$perm"
+    fi
+
+    # 成员 = 任务组 <swarm> 的会话；底层类型 agent 走 claude，task 走 shell
+    if _spawn_one "$swarm" "$member" "$type" "$payload" "$workdir"; then
+        [[ -n "$deps" ]] && _swarm_dep_set "$swarm" "$member" "$deps"
+        _swarm_meta_set "$swarm" status "running"
+        local suffix=""; (( ${#payload} > 60 )) && suffix="..."
+        msg_ok "成员 ${bold}${member}${reset} (${type}): ${dim}${payload:0:60}${suffix}${reset}"
+        [[ -n "$deps" ]] && echo -e "   ${dim}依赖: ${deps}${reset}"
+        return 0
+    fi
+    return 1
+}
+
+# ttmux swarm ls
+_swarm_ls() {
+    shopt -s nullglob
+    local dirs=("${TTMUX_SWARMS}"/*/)
+    if [[ ${#dirs[@]} -eq 0 ]]; then
+        msg_info "没有蜂群  ${dim}(ttmux swarm new <名> 创建)${reset}"
+        return
+    fi
+    echo ""
+    for d in "${dirs[@]}"; do
+        local name; name=$(basename "$d")
+        local goal status sup total=0 alive=0
+        goal=$(_swarm_meta_get "$name" goal)
+        status=$(_swarm_meta_get "$name" status)
+        sup=$(_swarm_meta_get "$name" supervisor)
+        while IFS= read -r sess; do
+            [[ -n "$sess" ]] || continue
+            ((total++)) || true
+            _session_exists "$sess" && ((alive++)) || true
+        done < <(_group_sessions "$name")
+        # 状态着色
+        local st_str
+        case "$status" in
+            running)     st_str="${yellow}running${reset}" ;;
+            done)        st_str="${green}done${reset}" ;;
+            integrating) st_str="${cyan}integrating${reset}" ;;
+            archived)    st_str="${dim}archived${reset}" ;;
+            *)           st_str="${dim}${status:-planning}${reset}" ;;
+        esac
+        echo -e "   ${icon_group} ${bold}${name}${reset}  ${dim}${alive}/${total} 活跃${reset}  ${st_str}$( [[ -n "$sup" ]] && echo "  ${magenta}◆${sup}${reset}" )"
+        [[ -n "$goal" ]] && echo -e "       ${dim}${goal}${reset}"
+    done
+    echo ""
+}
+
+# ttmux swarm status <群>
+_swarm_status() {
+    local name="$1"
+    if ! _swarm_exists "$name"; then msg_err "蜂群不存在: ${name}"; return 1; fi
+    local goal status sup created
+    goal=$(_swarm_meta_get "$name" goal)
+    status=$(_swarm_meta_get "$name" status)
+    sup=$(_swarm_meta_get "$name" supervisor)
+    created=$(_swarm_meta_get "$name" created)
+    echo ""
+    echo -e "  ${magenta}◆${reset} ${bold}蜂群: ${name}${reset}   ${dim}[${status:-planning}]${reset}"
+    [[ -n "$goal" ]]    && echo -e "    ${dim}目标:${reset} ${goal}"
+    [[ -n "$sup" ]]     && echo -e "    ${dim}指挥:${reset} ${magenta}${sup}${reset}"
+    [[ -n "$created" ]] && echo -e "    ${dim}创建:${reset} ${dim}${created}${reset}"
+    # 成员状态 + 依赖
+    while IFS= read -r sess; do
+        [[ -n "$sess" ]] || continue
+        local m dep
+        m=$(_swarm_member_name "$name" "$sess")
+        dep=$(_swarm_dep_get "$name" "$m")
+        [[ -n "$dep" ]] && echo -e "    ${dim}└ ${m} 依赖→ ${dep}${reset}"
+    done < <(_group_sessions "$name")
+    # 复用任务组状态(逐会话 running/done)；还没有成员时不报错
+    if _group_exists "$name"; then
+        _status "$name" || true
+    else
+        echo -e "    ${dim}(还没有成员，用 a) 加成员)${reset}"
+    fi
+    return 0
+}
+
+# ttmux swarm collect <群> [--json]
+_swarm_collect() {
+    local name="$1" fmt="${2:-text}"
+    if ! _swarm_exists "$name"; then msg_err "蜂群不存在: ${name}"; return 1; fi
+    if ! _group_exists "$name"; then
+        msg_info "蜂群 ${bold}${name}${reset} 还没有成员"
+        return 0
+    fi
+    _collect "$name" "$fmt" || true
+    return 0
+}
+
+# ttmux swarm adopt <群> [--by <cc会话>] [--dir <目录>]
+# cc 接管：写 supervisor + 拉起(或复用)一个交互式 cc 会话并注入 /cc-swarm --swarm <群>
+_swarm_adopt() {
+    local swarm="$1"; shift || true
+    if ! _swarm_exists "$swarm"; then msg_err "蜂群不存在: ${swarm}"; return 1; fi
+    local cc="" dir; dir="$(pwd)"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --by)  cc="$2"; shift 2 ;;
+            --dir) dir="$2"; shift 2 ;;
+            *)     shift ;;
+        esac
+    done
+    [[ -n "$cc" ]] || cc="cc-${swarm}"
+
+    _swarm_meta_set "$swarm" supervisor "$cc"
+    _swarm_meta_set "$swarm" status "running"
+
+    local invoke="/cc-swarm --swarm ${swarm}"
+    if _session_exists "$cc"; then
+        # 复用已有 cc 会话：直接发指令
+        "$TMUX_BIN" send-keys -t "$cc" "$invoke" C-m
+        msg_ok "已让现有会话 ${bold}${cc}${reset} 接管蜂群 ${bold}${swarm}${reset}"
+    else
+        # 新建交互式 claude 会话作为指挥
+        local claude_bin; claude_bin="$(command -v claude || echo claude)"
+        "$TMUX_BIN" new-session -d -s "$cc" -x 220 -y 50
+        _inject_env "$cc"
+        "$TMUX_BIN" pipe-pane -t "$cc" -o "cat >> '${TTMUX_LOGS}/${cc}.log'"
+        : > "${TTMUX_LOGS}/${cc}.log"
+        # 用初始 prompt 直接拉起 cc-swarm 监护(交互式，便于审批/追加指令)
+        "$TMUX_BIN" send-keys -t "$cc" "cd '${dir}' && ${claude_bin} '${invoke}'" C-m
+        msg_ok "已拉起指挥会话 ${bold}${cc}${reset} 接管蜂群 ${bold}${swarm}${reset}"
+    fi
+    echo -e "   ${dim}附加查看:  ttmux a ${cc}${reset}"
+    echo -e "   ${dim}若指挥未自动开始，附加后手动发:  ${invoke}${reset}"
+}
+
+# ttmux swarm done <群>  — 标记完成(不杀会话)
+_swarm_done() {
+    local name="$1"
+    if ! _swarm_exists "$name"; then msg_err "蜂群不存在: ${name}"; return 1; fi
+    _swarm_meta_set "$name" status "done"
+    msg_ok "蜂群 ${bold}${name}${reset} 已标记完成"
+}
+
+# ttmux swarm archive <群> — 杀会话、保留元数据、置 archived
+_swarm_archive() {
+    local name="$1"
+    if ! _swarm_exists "$name"; then msg_err "蜂群不存在: ${name}"; return 1; fi
+    if _group_exists "$name"; then
+        _kill_group "$name"   # 优雅退出 agent + 杀会话 + 清任务元数据 + 删 .group 文件
+    fi
+    _swarm_meta_set "$name" status "archived"
+    msg_ok "蜂群 ${bold}${name}${reset} 已归档 ${dim}(会话已清，元数据保留)${reset}"
+}
+
+# ttmux swarm rm <群> — 彻底删除(杀会话 + 删全部元数据)
+_swarm_rm() {
+    local name="$1"
+    if ! _swarm_exists "$name"; then msg_err "蜂群不存在: ${name}"; return 1; fi
+    if ! _confirm "确定彻底删除蜂群 ${bold}${name}${reset}(含会话与元数据)?"; then
+        msg_info "已取消"; return 0
+    fi
+    _group_exists "$name" && _kill_group "$name" >/dev/null 2>&1 || true
+    rm -rf "$(_swarm_dir "$name")"
+    msg_ok "蜂群 ${bold}${name}${reset} 已删除"
+}
+
+# ══════════════════════════════════════════
+# ── 交互式：两层蜂群界面 ──
+# ══════════════════════════════════════════
+
+# 选一个蜂群（提示打到 stderr，选中名打到 stdout）
+_pick_swarm() {
+    local prompt="${1:-选择蜂群}"
+    local swarms=()
+    shopt -s nullglob
+    for d in "${TTMUX_SWARMS}"/*/; do
+        swarms+=("$(basename "$d")")
+    done
+    if [[ ${#swarms[@]} -eq 0 ]]; then
+        msg_info "没有蜂群" >&2
+        return 1
+    fi
+    if [[ ${#swarms[@]} -eq 1 ]]; then
+        echo "${swarms[0]}"; return 0
+    fi
+    echo "" >&2
+    echo -e "  ${bold}${prompt}:${reset}" >&2
+    local i=1
+    for s in "${swarms[@]}"; do
+        echo -e "    ${cyan}${i}${reset}) ${s}  ${dim}[$(_swarm_meta_get "$s" status)]${reset}" >&2
+        ((i++)) || true
+    done
+    echo "" >&2
+    read -r -p "  编号: " choice </dev/tty
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#swarms[@]} )); then
+        echo "${swarms[$((choice-1))]}"
+    else
+        return 1
+    fi
+}
+
+# 第一层：新建蜂群
+_interactive_swarm_new() {
+    read -r -p "  蜂群名称: " sname </dev/tty
+    [[ -n "$sname" ]] || return
+    read -r -p "  目标 (可空): " sgoal </dev/tty
+    echo ""
+    if [[ -n "$sgoal" ]]; then
+        _swarm_new "$sname" --goal "$sgoal"
+    else
+        _swarm_new "$sname"
+    fi
+    # 顺手问要不要进去加成员
+    echo ""
+    read -r -p "  现在进入该蜂群加成员? [Y/n]: " yn </dev/tty
+    case "${yn:-y}" in
+        n|N) ;;
+        *) _interactive_swarm_detail "$sname" ;;
+    esac
+}
+
+# 第二层：加成员
+_interactive_swarm_add_member() {
+    local swarm="$1"
+    read -r -p "  成员名称: " mname </dev/tty
+    [[ -n "$mname" ]] || return
+    echo -e "  ${bold}类型:${reset}  ${cyan}1${reset}) shell 命令   ${cyan}2${reset}) Claude Agent"
+    read -r -p "  选择 [2]: " mt </dev/tty
+    echo ""
+    if [[ "${mt:-2}" == "1" ]]; then
+        read -r -p "  命令: " mcmd </dev/tty
+        [[ -n "$mcmd" ]] || { msg_warn "命令为空，取消"; return; }
+        read -r -p "  依赖成员 (逗号分隔, 可空): " mdep </dev/tty
+        if [[ -n "$mdep" ]]; then
+            _swarm_add "$swarm" "$mname" --type task --depends-on "$mdep" "$mcmd"
+        else
+            _swarm_add "$swarm" "$mname" --type task "$mcmd"
+        fi
+    else
+        read -r -p "  任务描述: " mtask </dev/tty
+        [[ -n "$mtask" ]] || { msg_warn "任务为空，取消"; return; }
+        read -r -p "  工作目录 [$(pwd)]: " mdir </dev/tty
+        mdir="${mdir:-$(pwd)}"
+        read -r -p "  权限 (auto/plan/default) [auto]: " mperm </dev/tty
+        mperm="${mperm:-auto}"
+        read -r -p "  依赖成员 (逗号分隔, 可空): " mdep </dev/tty
+        local args=("$swarm" "$mname" --type agent --dir "$mdir" --perm "$mperm")
+        [[ -n "$mdep" ]] && args+=(--depends-on "$mdep")
+        args+=("$mtask")
+        _swarm_add "${args[@]}"
+    fi
+}
+
+# 第二层：对某成员追加指令
+_interactive_swarm_send() {
+    local swarm="$1"
+    local members=()
+    while IFS= read -r sess; do
+        [[ -n "$sess" ]] || continue
+        members+=("$sess")
+    done < <(_group_sessions "$swarm")
+    if [[ ${#members[@]} -eq 0 ]]; then msg_info "该蜂群还没有成员"; return; fi
+    echo ""
+    echo -e "  ${bold}成员:${reset}"
+    local i=1
+    for m in "${members[@]}"; do
+        local run; _session_exists "$m" && run=" ${yellow}运行中${reset}" || run=" ${dim}已结束${reset}"
+        echo -e "    ${cyan}${i}${reset}) $(_swarm_member_name "$swarm" "$m")${run}"
+        ((i++)) || true
+    done
+    echo ""
+    read -r -p "  选择成员编号: " choice </dev/tty
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#members[@]} )); then
+        read -r -p "  追加指令: " msg </dev/tty
+        [[ -n "$msg" ]] && _task_send "${members[$((choice-1))]}" "$msg"
+    else
+        msg_err "无效选择"
+    fi
+}
+
+# 第二层主循环：蜂群详情 / 成员管理
+_interactive_swarm_detail() {
+    local swarm="$1"
+    while true; do
+        clear
+        _swarm_status "$swarm"
+        echo ""
+        echo -e "  ${bold}蜂群 ${swarm} ─ 成员管理${reset}"
+        echo -e "    ${cyan}a${reset}) 加成员            ${cyan}m${reset}) 追加指令"
+        echo -e "    ${cyan}c${reset}) 等待并收集        ${cyan}k${reset}) 清理整群"
+        echo -e "    ${cyan}d${reset}) cc 接管           ${cyan}b${reset}) 返回上层"
+        echo ""
+        read -r -p "  选择: " act </dev/tty
+        echo ""
+        case "$act" in
+            a) _interactive_swarm_add_member "$swarm" || true; _interactive_pause ;;
+            m) _interactive_swarm_send "$swarm" || true; _interactive_pause ;;
+            c) _do_wait_group "$swarm" 300 || true; echo ""; _swarm_collect "$swarm" text || true; _interactive_pause ;;
+            k)
+                if _confirm "清理整群 ${bold}${swarm}${reset} (杀全部成员会话)?"; then
+                    _swarm_archive "$swarm" || true
+                fi
+                _interactive_pause; return ;;
+            d) _swarm_adopt "$swarm" || true; _interactive_pause ;;
+            b|q|"") return ;;
+            *) msg_warn "无效选择"; _interactive_pause ;;
+        esac
+    done
+}
+
+# 第一层主循环：蜂群管理
+_interactive_swarm() {
+    while true; do
+        clear
+        echo ""
+        echo -e "  ${bold}任务编排 ${magenta}(蜂群 / swarm)${reset}"
+        echo -e "  ${dim}$(printf '─%.0s' {1..44})${reset}"
+        _swarm_ls
+        echo -e "    ${cyan}n${reset}) 新建蜂群          ${cyan}e${reset}) 进入蜂群 ▸"
+        echo -e "    ${cyan}d${reset}) cc 接管蜂群       ${cyan}x${reset}) 归档/删除蜂群"
+        echo -e "    ${cyan}b${reset}) 返回主菜单"
+        echo ""
+        read -r -p "  选择: " act </dev/tty
+        echo ""
+        case "$act" in
+            n) _interactive_swarm_new || true; _interactive_pause ;;
+            e)
+                local s; s=$(_pick_swarm "进入蜂群") || { _interactive_pause; continue; }
+                _interactive_swarm_detail "$s" || true ;;
+            d)
+                local s; s=$(_pick_swarm "cc 接管") || { _interactive_pause; continue; }
+                _swarm_adopt "$s" || true; _interactive_pause ;;
+            x)
+                local s; s=$(_pick_swarm "归档/删除") || { _interactive_pause; continue; }
+                echo -e "  ${cyan}1${reset}) 归档(留元数据)  ${cyan}2${reset}) 彻底删除  ${cyan}0${reset}) 取消"
+                read -r -p "  选择: " xa </dev/tty
+                case "$xa" in
+                    1) _swarm_archive "$s" || true ;;
+                    2) _swarm_rm "$s" || true ;;
+                esac
+                _interactive_pause ;;
+            b|q|"") return ;;
+            *) msg_warn "无效选择"; _interactive_pause ;;
+        esac
+    done
+}
 # ══════════════════════════════════════════
 # ── 补全安装 ──
 # ══════════════════════════════════════════
@@ -906,28 +1364,29 @@ show_help() {
     ${green}killall${reset}                    关闭所有会话
     ${green}rename${reset} ${dim}<旧名> <新名>${reset}        重命名会话
 
-  ${bold}任务编排${reset}
-    ${green}spawn${reset}  ${dim}<组名> <名称> <命令> ...${reset}  批量创建并行任务
-    ${green}spawn${reset}  ${dim}--file <组名> <文件>${reset}      从文件读取任务
-    ${green}group${reset}  ${dim}ls${reset}                     列出所有任务组
-    ${green}group${reset}  ${dim}status <组名>${reset}           查看任务组状态
-    ${green}group${reset}  ${dim}kill <组名>${reset}             关闭整个任务组
-    ${green}status${reset} ${dim}<组名> [--json]${reset}        查看任务状态
-    ${green}wait${reset}   ${dim}<组名> [--timeout N]${reset}   等待任务组完成
-    ${green}collect${reset} ${dim}<组名> [--json]${reset}       收集所有任务输出
-    ${green}capture${reset} ${dim}<会话> [--lines N]${reset}    捕获会话输出
+  ${bold}任务编排 ${magenta}(命令 / Agent 统一)${reset}
+    ${green}spawn${reset}  ${dim}<组名> <名称> <命令> ...${reset}      批量创建命令任务
+    ${green}spawn${reset}  ${dim}--agent <组名> <名称> <任务> ...${reset}  批量创建 Claude Agent
+    ${green}spawn${reset}  ${dim}[--agent] --file <组名> <文件>${reset}   从文件读取
+    ${green}status${reset} ${dim}<组名> [--json]${reset}            查看状态 (命令+Agent)
+    ${green}wait${reset}   ${dim}<组名> [--timeout N]${reset}       等待任务组完成
+    ${green}collect${reset} ${dim}<组名> [--json]${reset}           收集所有任务输出
+    ${green}send${reset}   ${dim}<会话名> <指令>${reset}            向任务/Agent 追加指令
+    ${green}group${reset}  ${dim}ls | kill <组名>${reset}           列出 / 清理任务组
+    ${green}capture${reset} ${dim}<会话> [--lines N]${reset}        捕获会话输出
 
-  ${bold}多 Agent 编排 ${magenta}(multi-agent)${reset}
-    ${green}agent spawn${reset}   ${dim}<组名> <名称> <任务> ... [选项]${reset}
-                                        启动多个 Claude 并行执行
-    ${green}agent status${reset}  ${dim}<组名>${reset}             查看 Agent 状态
-    ${green}agent send${reset}    ${dim}<会话名> <指令>${reset}    向 Agent 追加指令
-    ${green}agent collect${reset} ${dim}<组名> [--json]${reset}   收集 Agent 结果
-    ${green}agent kill${reset}    ${dim}<组名>${reset}             清理 Agent 组
-    ${green}agent spawn${reset}   ${dim}--file <组名> <文件> [选项]${reset}
-                                        从文件批量创建
+    ${dim}Agent 选项: --dir <目录>  --model <模型>  --perm <权限模式>  --max-turns <N>${reset}
+    ${dim}兼容别名: agent spawn|status|send|collect|kill 仍可用${reset}
 
-    ${dim}选项: --dir <目录>  --model <模型>  --perm <权限模式>  --max-turns <N>${reset}
+  ${bold}蜂群编排 ${magenta}(swarm — 有目标的任务组, 可被 cc 接管)${reset}
+    ${green}swarm new${reset}    ${dim}<名> [--goal "..."]${reset}        新建蜂群
+    ${green}swarm add${reset}    ${dim}<群> <成员> --type task|agent ...${reset}  加成员
+                ${dim}[--dir/--perm/--model] [--depends-on a,b] <命令或任务>${reset}
+    ${green}swarm ls${reset}                                列出蜂群 (目标/状态/指挥)
+    ${green}swarm status${reset} ${dim}<群>${reset}                    成员状态 + 依赖
+    ${green}swarm collect${reset} ${dim}<群> [--json]${reset}          收集成员输出
+    ${green}swarm adopt${reset}  ${dim}<群> [--by <cc会话>]${reset}     cc 接管 (拉起指挥会话)
+    ${green}swarm done${reset}|${green}archive${reset}|${green}rm${reset} ${dim}<群>${reset}        完成 / 归档 / 删除
 
   ${bold}窗口 / 窗格${reset}
     ${green}nw${reset}    ${dim}[名称]${reset}                新建窗口
@@ -956,15 +1415,19 @@ show_help() {
         "lint" "npm run lint" \\
         "test" "npm test"                       ${dim}# 并行任务${reset}
 
-    ${dim}\$${reset} ttmux agent spawn refactor \\
+    ${dim}\$${reset} ttmux spawn --agent refactor \\
         "api"   "重构用户认证模块" \\
         "db"    "优化数据库查询性能" \\
         "tests" "补充单元测试" \\
         --dir ~/project --perm auto             ${dim}# 多 Agent${reset}
-    ${dim}\$${reset} ttmux agent status refactor            ${dim}# 查看进度${reset}
-    ${dim}\$${reset} ttmux agent send refactor-api "加上JWT" ${dim}# 追加指令${reset}
-    ${dim}\$${reset} ttmux agent collect refactor            ${dim}# 收集结果${reset}
-    ${dim}\$${reset} ttmux agent kill refactor               ${dim}# 清理${reset}
+    ${dim}\$${reset} ttmux status refactor                  ${dim}# 查看进度 (命令+Agent)${reset}
+    ${dim}\$${reset} ttmux send refactor-api "加上JWT"       ${dim}# 追加指令${reset}
+    ${dim}\$${reset} ttmux collect refactor                  ${dim}# 收集结果${reset}
+    ${dim}\$${reset} ttmux group kill refactor               ${dim}# 清理${reset}
+
+    ${dim}\$${reset} ttmux swarm new login --goal "加登录功能"  ${dim}# 建蜂群${reset}
+    ${dim}\$${reset} ttmux swarm add login api --type agent "实现登录 API"
+    ${dim}\$${reset} ttmux swarm adopt login                 ${dim}# 交给 cc 监护${reset}
 
   ${dim}未识别的命令会直接转发给 tmux${reset}
 
@@ -988,7 +1451,9 @@ _interactive_header() {
     shopt -s nullglob
     local gfiles=("${TTMUX_GROUPS}"/*.group)
     group_count=${#gfiles[@]}
-    echo -e "  ${dim}会话: ${reset}${bold}${sess_count}${reset}${dim}  任务组: ${reset}${bold}${group_count}${reset}"
+    local sdirs=("${TTMUX_SWARMS}"/*/)
+    local swarm_count=${#sdirs[@]}
+    echo -e "  ${dim}会话: ${reset}${bold}${sess_count}${reset}${dim}  任务组: ${reset}${bold}${group_count}${reset}${dim}  蜂群: ${reset}${bold}${swarm_count}${reset}"
     echo ""
 }
 
@@ -997,17 +1462,13 @@ _interactive_menu() {
     echo -e "    ${cyan}1${reset}) 列出会话          ${cyan}2${reset}) 新建会话"
     echo -e "    ${cyan}3${reset}) 附加会话          ${cyan}4${reset}) 关闭会话"
     echo ""
-    echo -e "  ${bold}任务编排${reset}"
-    echo -e "    ${cyan}5${reset}) 创建并行任务      ${cyan}6${reset}) 任务状态"
-    echo -e "    ${cyan}7${reset}) 等待并收集        ${cyan}8${reset}) 清理任务组"
-    echo ""
-    echo -e "  ${bold}多 Agent ${magenta}(Claude)${reset}"
-    echo -e "    ${cyan}a${reset}) 启动 Agent 组     ${cyan}s${reset}) Agent 状态"
-    echo -e "    ${cyan}m${reset}) 追加指令           ${cyan}c${reset}) 收集结果"
-    echo -e "    ${cyan}x${reset}) 清理 Agent 组"
+    echo -e "  ${bold}任务编排 ${magenta}(蜂群 / swarm)${reset}"
+    echo -e "    ${cyan}5${reset}) 蜂群编排 ▸        ${cyan}6${reset}) 状态总览"
+    echo -e "    ${cyan}7${reset}) 等待并收集        ${cyan}8${reset}) 追加指令"
+    echo -e "    ${cyan}9${reset}) 清理任务组"
     echo ""
     echo -e "  ${bold}其他${reset}"
-    echo -e "    ${cyan}9${reset}) 发送命令          ${cyan}h${reset}) 帮助"
+    echo -e "    ${cyan}s${reset}) 发送命令          ${cyan}h${reset}) 帮助"
     echo ""
 }
 
@@ -1016,10 +1477,21 @@ _interactive_pause() {
     read -r -p "  按回车继续..." _ </dev/tty
 }
 
-_interactive_spawn() {
+# 创建任务：先选类型（命令 / Agent），再分流
+_interactive_create() {
     read -r -p "  任务组名称: " group_name </dev/tty
     [[ -n "$group_name" ]] || return
+    echo ""
+    echo -e "  ${bold}任务类型:${reset}  ${cyan}1${reset}) shell 命令   ${cyan}2${reset}) Claude Agent"
+    read -r -p "  选择 [1]: " ttype </dev/tty
+    case "${ttype:-1}" in
+        2) _interactive_agent_spawn "$group_name" ;;
+        *) _interactive_cmd_spawn "$group_name" ;;
+    esac
+}
 
+_interactive_cmd_spawn() {
+    local group_name="$1"
     local tasks=()
     echo -e "  ${dim}逐个输入任务 (名称 + 命令), 空名称结束${reset}"
     while true; do
@@ -1069,15 +1541,15 @@ _interactive_wait_collect() {
     fi
 
     echo ""
-    _group_status "$target"
+    _status "$target"
 
     echo -e "  ${bold}操作:${reset}"
     echo -e "    ${cyan}1${reset}) 等待完成  ${cyan}2${reset}) 收集输出  ${cyan}3${reset}) 两者都做  ${cyan}0${reset}) 返回"
     read -r -p "  选择: " action </dev/tty
     case "$action" in
         1)  _do_wait_group "$target" 300 ;;
-        2)  echo ""; _do_collect "$target" "text" ;;
-        3)  _do_wait_group "$target" 300; echo ""; _do_collect "$target" "text" ;;
+        2)  echo ""; _collect "$target" "text" ;;
+        3)  _do_wait_group "$target" 300; echo ""; _collect "$target" "text" ;;
         *)  return ;;
     esac
 }
@@ -1108,23 +1580,13 @@ _interactive_group_kill() {
     if [[ "$choice" == "0" ]]; then
         if _confirm "确定清理全部 ${#groups[@]} 个任务组?"; then
             for g in "${groups[@]}"; do
-                while IFS= read -r sess; do
-                    [[ -n "$sess" ]] || continue
-                    _session_exists "$sess" && "$TMUX_BIN" kill-session -t "$sess" 2>/dev/null || true
-                done < <(_group_sessions "$g")
-                rm -f "$(_group_file "$g")"
-                msg_ok "已清理 ${bold}${g}${reset}"
+                _kill_group "$g"
             done
         fi
     elif [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#groups[@]} )); then
         local target="${groups[$((choice-1))]}"
         if _confirm "确定清理任务组 ${bold}${target}${reset}?"; then
-            while IFS= read -r sess; do
-                [[ -n "$sess" ]] || continue
-                _session_exists "$sess" && "$TMUX_BIN" kill-session -t "$sess" 2>/dev/null || true
-            done < <(_group_sessions "$target")
-            rm -f "$(_group_file "$target")"
-            msg_ok "任务组 ${bold}${target}${reset} 已清理"
+            _kill_group "$target"
         fi
     fi
 }
@@ -1140,7 +1602,7 @@ _interactive_group_status() {
         echo ""
         echo -e "  ${bold}任务组:${reset}"
         for g in "${groups[@]}"; do
-            _group_status "$g"
+            _status "$g"
         done
     fi
     _pretty_sessions
@@ -1178,7 +1640,7 @@ _pick_group() {
 }
 
 _interactive_agent_spawn() {
-    read -r -p "  Agent 组名称: " gname </dev/tty
+    local gname="$1"
     [[ -n "$gname" ]] || return
     read -r -p "  工作目录 [$(pwd)]: " wdir </dev/tty
     wdir="${wdir:-$(pwd)}"
@@ -1211,17 +1673,12 @@ _interactive_agent_spawn() {
     _agent_spawn "$gname" "${tasks[@]}" "${opts[@]}"
 }
 
-_interactive_agent_status() {
+# 追加指令：选任务组 → 选任务 session → 发送（命令任务与 Agent 通用）
+_interactive_task_send() {
     local g
-    g=$(_pick_group "查看 Agent 状态") || return
-    _agent_status "$g"
-}
-
-_interactive_agent_send() {
-    local g
-    g=$(_pick_group "选择 Agent 组") || return
+    g=$(_pick_group "选择任务组") || return
     echo ""
-    echo -e "  ${bold}Agent 列表:${reset}"
+    echo -e "  ${bold}任务列表:${reset}"
     local agents=()
     while IFS= read -r sess; do
         [[ -n "$sess" ]] || continue
@@ -1235,27 +1692,13 @@ _interactive_agent_send() {
         ((i++)) || true
     done
     echo ""
-    read -r -p "  选择 Agent 编号: " choice </dev/tty
+    read -r -p "  选择任务编号: " choice </dev/tty
     if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#agents[@]} )); then
         local target="${agents[$((choice-1))]}"
         read -r -p "  追加指令: " msg </dev/tty
-        [[ -n "$msg" ]] && _agent_send "$target" "$msg"
+        [[ -n "$msg" ]] && _task_send "$target" "$msg"
     else
         msg_err "无效选择"
-    fi
-}
-
-_interactive_agent_collect() {
-    local g
-    g=$(_pick_group "收集 Agent 结果") || return
-    _agent_collect "$g" "text"
-}
-
-_interactive_agent_kill() {
-    local g
-    g=$(_pick_group "清理 Agent 组") || return
-    if _confirm "确定清理 Agent 组 ${bold}${g}${reset}?"; then
-        _agent_kill "$g"
     fi
 }
 
@@ -1297,11 +1740,12 @@ _interactive() {
                 fi
                 _interactive_pause
                 ;;
-            5)  _interactive_spawn; _interactive_pause ;;
+            5)  _interactive_swarm ;;
             6)  _interactive_group_status; _interactive_pause ;;
             7)  _interactive_wait_collect; _interactive_pause ;;
-            8)  _interactive_group_kill; _interactive_pause ;;
-            9)
+            8)  _interactive_task_send; _interactive_pause ;;
+            9)  _interactive_group_kill; _interactive_pause ;;
+            s)
                 target=$(_pick_session "发送命令到") || { _interactive_pause; continue; }
                 read -r -p "  命令: " icmd </dev/tty
                 if [[ -n "$icmd" ]]; then
@@ -1310,11 +1754,6 @@ _interactive() {
                 fi
                 _interactive_pause
                 ;;
-            a)  _interactive_agent_spawn; _interactive_pause ;;
-            s)  _interactive_agent_status; _interactive_pause ;;
-            m)  _interactive_agent_send; _interactive_pause ;;
-            c)  _interactive_agent_collect; _interactive_pause ;;
-            x)  _interactive_agent_kill; _interactive_pause ;;
             h)  show_help; _interactive_pause ;;
             q|0|"")  echo -e "  ${dim}bye${reset}"; echo ""; break ;;
             *)  msg_warn "无效选择"; _interactive_pause ;;
@@ -1443,7 +1882,24 @@ case "$cmd" in
 
     # ── 任务编排 ──
     spawn)
-        if [[ "${1:-}" == "--file" ]]; then
+        # 命令任务与 Agent 任务统一入口；--agent 走 Claude，默认走 shell 命令
+        if [[ "${1:-}" == "--agent" ]]; then
+            shift
+            if [[ "${1:-}" == "--file" ]]; then
+                shift
+                if [[ $# -lt 2 ]]; then
+                    msg_err "用法: ttmux spawn --agent --file <组名> <文件> [选项]"
+                    exit 1
+                fi
+                _agent_spawn_file "$@"
+            else
+                if [[ $# -lt 3 ]]; then
+                    msg_err "用法: ttmux spawn --agent <组名> <名称> <任务> [<名称> <任务> ...] [选项]"
+                    exit 1
+                fi
+                _agent_spawn "$@"
+            fi
+        elif [[ "${1:-}" == "--file" ]]; then
             shift
             if [[ $# -lt 2 ]]; then
                 msg_err "用法: ttmux spawn --file <组名> <文件>"
@@ -1463,7 +1919,11 @@ case "$cmd" in
         shift || true
         case "$subcmd" in
             ls|list)
-                _group_list
+                if [[ "${1:-}" == "--json" ]]; then
+                    _group_list_json
+                else
+                    _group_list
+                fi
                 ;;
             status)
                 if [[ $# -lt 1 ]]; then
@@ -1471,9 +1931,9 @@ case "$cmd" in
                     exit 1
                 fi
                 if [[ "${2:-}" == "--json" ]]; then
-                    _group_status_json "$1"
+                    _status_json "$1"
                 else
-                    _group_status "$1"
+                    _status "$1"
                 fi
                 ;;
             kill)
@@ -1481,15 +1941,7 @@ case "$cmd" in
                     msg_err "用法: ttmux group kill <组名>"
                     exit 1
                 fi
-                local_group="$1"
-                while IFS= read -r sess; do
-                    [[ -n "$sess" ]] || continue
-                    if _session_exists "$sess"; then
-                        "$TMUX_BIN" kill-session -t "$sess" 2>/dev/null || true
-                    fi
-                done < <(_group_sessions "$local_group")
-                rm -f "$(_group_file "$local_group")"
-                msg_ok "任务组 ${bold}${local_group}${reset} 已清理"
+                _kill_group "$1"
                 ;;
             *)
                 msg_err "未知子命令: group ${subcmd}"
@@ -1504,9 +1956,9 @@ case "$cmd" in
             echo ""
             _group_list
         elif [[ "${2:-}" == "--json" ]]; then
-            _group_status_json "$1"
+            _status_json "$1"
         else
-            _group_status "$1"
+            _status "$1"
         fi
         ;;
     wait)
@@ -1547,7 +1999,73 @@ case "$cmd" in
         group="$1"; shift
         fmt="text"
         [[ "${1:-}" == "--json" ]] && fmt="json"
-        _do_collect "$group" "$fmt"
+        _collect "$group" "$fmt"
+        ;;
+
+    # ── 蜂群编排 (swarm) ──
+    swarm)
+        subcmd="${1:-ls}"
+        shift || true
+        case "$subcmd" in
+            new|create)
+                if [[ $# -lt 1 ]]; then
+                    msg_err "用法: ttmux swarm new <名> [--goal \"...\"]"
+                    exit 1
+                fi
+                _swarm_new "$@"
+                ;;
+            add)
+                if [[ $# -lt 2 ]]; then
+                    msg_err "用法: ttmux swarm add <群> <成员> [--type task|agent] <命令或任务>"
+                    exit 1
+                fi
+                _swarm_add "$@"
+                ;;
+            ls|list)
+                _swarm_ls
+                ;;
+            status)
+                if [[ $# -lt 1 ]]; then
+                    msg_err "用法: ttmux swarm status <群>"
+                    exit 1
+                fi
+                _swarm_status "$1"
+                ;;
+            collect)
+                if [[ $# -lt 1 ]]; then
+                    msg_err "用法: ttmux swarm collect <群> [--json]"
+                    exit 1
+                fi
+                local_swarm="$1"; shift
+                fmt="text"
+                [[ "${1:-}" == "--json" ]] && fmt="json"
+                _swarm_collect "$local_swarm" "$fmt"
+                ;;
+            adopt)
+                if [[ $# -lt 1 ]]; then
+                    msg_err "用法: ttmux swarm adopt <群> [--by <cc会话>]"
+                    exit 1
+                fi
+                _swarm_adopt "$@"
+                ;;
+            done)
+                [[ $# -ge 1 ]] || { msg_err "用法: ttmux swarm done <群>"; exit 1; }
+                _swarm_done "$1"
+                ;;
+            archive)
+                [[ $# -ge 1 ]] || { msg_err "用法: ttmux swarm archive <群>"; exit 1; }
+                _swarm_archive "$1"
+                ;;
+            rm|delete)
+                [[ $# -ge 1 ]] || { msg_err "用法: ttmux swarm rm <群>"; exit 1; }
+                _swarm_rm "$1"
+                ;;
+            *)
+                msg_err "未知子命令: swarm ${subcmd}"
+                echo -e "   可用: new, add, ls, status, collect, adopt, done, archive, rm"
+                exit 1
+                ;;
+        esac
         ;;
 
     # ── 窗口 / 窗格 ──
@@ -1601,7 +2119,10 @@ case "$cmd" in
         shift || true
         case "$subcmd" in
             ls|list)
-                _env_list
+                if [[ "${1:-}" == "--json" ]]; then _env_list_json; else _env_list; fi
+                ;;
+            --json)
+                _env_list_json
                 ;;
             set)
                 if [[ $# -lt 1 ]]; then
@@ -1659,7 +2180,11 @@ case "$cmd" in
         fi
         ;;
     info)
-        "$TMUX_BIN" info
+        if [[ "${1:-}" == "--json" ]]; then
+            _info_json
+        else
+            "$TMUX_BIN" info
+        fi
         ;;
     source)
         if [[ -f ~/.tmux.conf ]]; then
@@ -1673,7 +2198,7 @@ case "$cmd" in
         _install_completion
         ;;
 
-    # ── 多 Agent 编排 ──
+    # ── 多 Agent 编排（向后兼容别名，底层与任务编排统一） ──
     agent)
         subcmd="${1:-help}"
         shift || true
@@ -1699,14 +2224,18 @@ case "$cmd" in
                     msg_err "用法: ttmux agent status <组名>"
                     exit 1
                 fi
-                _agent_status "$1"
+                if [[ "${2:-}" == "--json" ]]; then
+                    _status_json "$1"
+                else
+                    _status "$1"
+                fi
                 ;;
             send)
                 if [[ $# -lt 2 ]]; then
                     msg_err "用法: ttmux agent send <会话名> <指令>"
                     exit 1
                 fi
-                _agent_send "$@"
+                _task_send "$@"
                 ;;
             collect)
                 if [[ $# -lt 1 ]]; then
@@ -1716,14 +2245,14 @@ case "$cmd" in
                 local_group="$1"; shift
                 fmt="text"
                 [[ "${1:-}" == "--json" ]] && fmt="json"
-                _agent_collect "$local_group" "$fmt"
+                _collect "$local_group" "$fmt"
                 ;;
             kill)
                 if [[ $# -lt 1 ]]; then
                     msg_err "用法: ttmux agent kill <组名>"
                     exit 1
                 fi
-                _agent_kill "$1"
+                _kill_group "$1"
                 ;;
             *)
                 msg_err "未知子命令: agent ${subcmd}"

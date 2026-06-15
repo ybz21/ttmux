@@ -185,12 +185,49 @@ ttmux collect build
 ttmux group kill build
 ```
 
+## 模式三：蜂群编排（swarm）
+
+当一摊活需要**有目标、能被持续监护、成员间有依赖**时，用蜂群。
+蜂群 = 一个有目标的任务组（成员可以是命令任务，也可以是 Claude Agent，二者共存），
+并且可以**交给 cc-swarm（神）接管监护**。
+
+```bash
+# 1. 建蜂群（带目标）
+ttmux swarm new login --goal "给项目加登录功能：注册/登录/JWT"
+
+# 2. 加成员（agent 或 task；可声明依赖）
+ttmux swarm add login api   --type agent --dir ~/proj "实现登录/注册 API"
+ttmux swarm add login ui    --type agent --dir ~/proj "实现登录页面"
+ttmux swarm add login e2e   --type task  --depends-on api,ui "npm run e2e"
+
+# 3. 看状态 / 收集
+ttmux swarm ls
+ttmux swarm status login
+ttmux swarm collect login
+
+# 4. 交给 cc 监护（自动拉起一个交互式指挥会话 cc-login，作用域只盯这个蜂群）
+ttmux swarm adopt login          # 或 --by <已有cc会话> 复用现有指挥
+
+# 5. 收尾
+ttmux swarm done login           # 标记完成（不杀会话）
+ttmux swarm archive login        # 杀会话、留元数据
+ttmux swarm rm login             # 彻底删除
+```
+
+**何时用蜂群 vs spawn/agent**：
+- 一次性并行小活、跑完即弃 → `spawn` / `spawn --agent`（轻量）。
+- 有明确目标、要持续监护到交付、成员有先后依赖、想让 cc 接管 → `swarm`（重量、闭环）。
+
+`swarm adopt` 会把蜂群交给 cc-swarm，指挥会话用 `/cc-swarm --swarm <名>` 进入**作用域巡检**，
+只监护该蜂群的成员（而非全局所有 `cc-*`）。详见 cc-swarm skill。
+
 ## 参数分发
 
 当用户通过 `/ttmux` 调用时：
 
 - **无参数** → `ttmux status`，汇报当前状态
 - **`run <描述>`** → 分析任务、拆分、启动 Agent 组、监控、收集、组装、验证
+- **`swarm <描述>`** → 建蜂群、加成员、（可选）`swarm adopt` 交给 cc 监护
 - **`check <组名>`** → 查看状态
 - **`collect <组名>`** → 收集并汇总
 - **`clean`** → 清理所有 Agent 组

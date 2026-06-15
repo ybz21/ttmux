@@ -61,37 +61,46 @@ elif curl -fsSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/skills/tmux
     info "ttmux skill 已安装"
 fi
 
-# father skill — 合并多个子文档为一个文件
-install_father_skill() {
+# cc-swarm skill — 合并多个子文档为一个文件（按生命周期顺序）
+CC_SWARM_DOCS="intake decompose spawn patrol approve test-push review concurrency integrate memory"
+
+install_cc_swarm_skill() {
     local src_dir="$1"
-    local dest="${SKILL_DIR}/father.md"
+    local dest="${SKILL_DIR}/cc-swarm.md"
     if [[ -f "${src_dir}/SKILL.md" ]]; then
         cat "${src_dir}/SKILL.md" > "$dest"
-        for doc in patrol approve test-push review concurrency memory; do
-            if [[ -f "${src_dir}/${doc}.md" ]]; then
+        for doc in $CC_SWARM_DOCS; do
+            # 子文档放在 docs/ 下；兼容老的扁平布局
+            local doc_file="${src_dir}/docs/${doc}.md"
+            [[ -f "$doc_file" ]] || doc_file="${src_dir}/${doc}.md"
+            if [[ -f "$doc_file" ]]; then
                 echo "" >> "$dest"
                 echo "" >> "$dest"
-                cat "${src_dir}/${doc}.md" >> "$dest"
+                cat "$doc_file" >> "$dest"
             fi
         done
-        info "father skill 已安装"
+        info "cc-swarm skill 已安装"
         return 0
     fi
     return 1
 }
 
-if [[ -d "${SCRIPT_DIR}/skills/father" ]]; then
-    install_father_skill "${SCRIPT_DIR}/skills/father"
+if [[ -d "${SCRIPT_DIR}/skills/cc-swarm" ]]; then
+    install_cc_swarm_skill "${SCRIPT_DIR}/skills/cc-swarm"
 else
     # 从 GitHub 下载各子文档并合并
     local_tmp=$(mktemp -d)
+    mkdir -p "${local_tmp}/docs"
     all_ok=true
-    for f in SKILL.md patrol.md approve.md test-push.md review.md concurrency.md; do
-        curl -fsSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/skills/father/${f}" \
-            -o "${local_tmp}/${f}" 2>/dev/null || { all_ok=false; break; }
+    curl -fsSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/skills/cc-swarm/SKILL.md" \
+        -o "${local_tmp}/SKILL.md" 2>/dev/null || all_ok=false
+    for d in $CC_SWARM_DOCS; do
+        $all_ok || break
+        curl -fsSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/skills/cc-swarm/docs/${d}.md" \
+            -o "${local_tmp}/docs/${d}.md" 2>/dev/null || { all_ok=false; break; }
     done
     if $all_ok; then
-        install_father_skill "$local_tmp"
+        install_cc_swarm_skill "$local_tmp"
     fi
     rm -rf "$local_tmp"
 fi
