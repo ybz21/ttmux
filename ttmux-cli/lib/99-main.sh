@@ -259,14 +259,14 @@ case "$cmd" in
                 _swarm_add "$@"
                 ;;
             ls|list)
-                _swarm_ls
+                _swarm_ls "$@"
                 ;;
             status)
                 if [[ $# -lt 1 ]]; then
-                    msg_err "用法: ttmux swarm status <群>"
+                    msg_err "用法: ttmux swarm status <群> [--json]"
                     exit 1
                 fi
-                _swarm_status "$1"
+                _swarm_status "$@"
                 ;;
             collect)
                 if [[ $# -lt 1 ]]; then
@@ -296,6 +296,30 @@ case "$cmd" in
                 [[ $# -ge 1 ]] || { msg_err "用法: ttmux swarm done <群> [成员]"; exit 1; }
                 _swarm_done "$1" "${2:-}"
                 ;;
+            sql)
+                [[ $# -ge 1 ]] || { msg_err '用法: ttmux swarm sql <群> [--json] "SELECT ..."'; exit 1; }
+                _swarm_sql "$@"
+                ;;
+            say)
+                [[ $# -ge 2 ]] || { msg_err '用法: ttmux swarm say <群> [--as 成员] [--kind 类型] <消息>'; exit 1; }
+                _plaza_say "$@"
+                ;;
+            feed)
+                [[ $# -ge 1 ]] || { msg_err "用法: ttmux swarm feed <群> [-n N] [--from 成员] [--kind 类型] [--since id] [--json]"; exit 1; }
+                _plaza_feed "$@"
+                ;;
+            watch)
+                [[ $# -ge 1 ]] || { msg_err "用法: ttmux swarm watch <群>"; exit 1; }
+                _plaza_watch "$@"
+                ;;
+            board)
+                [[ $# -ge 1 ]] || { msg_err "用法: ttmux swarm board <群> [--json]"; exit 1; }
+                _board_render "$@"
+                ;;
+            task)
+                [[ $# -ge 1 ]] || { msg_err "用法: ttmux swarm task <add|ls|show|assign|move|done|rm> <群> ..."; exit 1; }
+                _board_task "$@"
+                ;;
             archive)
                 [[ $# -ge 1 ]] || { msg_err "用法: ttmux swarm archive <群>"; exit 1; }
                 _swarm_archive "$1"
@@ -306,7 +330,7 @@ case "$cmd" in
                 ;;
             *)
                 msg_err "未知子命令: swarm ${subcmd}"
-                echo -e "   可用: new, add, ls, status, activate, collect, adopt, done, archive, rm"
+                echo -e "   可用: new, add, ls, status, activate, collect, adopt, done, say, feed, watch, board, task, sql, archive, rm"
                 exit 1
                 ;;
         esac

@@ -17,6 +17,8 @@ TTMUX_GROUPS="${TTMUX_DATA}/groups"
 TTMUX_ENV="${TTMUX_DATA}/env"
 TTMUX_META="${TTMUX_DATA}/meta"
 TTMUX_SWARMS="${TTMUX_DATA}/swarms"
+# 蜂群 SQLite 存储新家（meta.db + swarms/<id>/swarm.db）；普通会话暂留 TTMUX_DATA
+TTMUX_HOME="${TTMUX_HOME:-${HOME}/.ttmux}"
 
 mkdir -p "$TTMUX_LOGS" "$TTMUX_GROUPS" "$TTMUX_META" "$TTMUX_SWARMS"
 
@@ -139,6 +141,96 @@ _json_sessions() {
     echo "]"
 }
 
+# ══════════════════════════════════════════
+# ── store: 蜂群 SQLite 存储地基 ──
+# ══════════════════════════════════════════
+#
+# 混合拓扑（详见 ttmux-cli/README.md「落盘布局」）：
+#   ${TTMUX_HOME}/meta.db                 全局索引: swarms 注册表(name→id/状态)
+#   ${TTMUX_HOME}/swarms/<id>/swarm.db     每群库: members / posts(广场) / cards(看板)
+#   ${TTMUX_HOME}/swarms/<id>/logs/        成员终端日志(文件)
+#
+# 本模块只提供地基(id/转义/schema/解析/查询封装)，不实现业务命令——那些在 swarm.sh。
+# 命名上用 _meta_* / _swarm_db* / _swarm_home / _swarm_resolve，与 swarm.sh 既有函数不冲突。
+
+# 依赖守卫：用到蜂群存储时才检查 sqlite3
+_need_sqlite() {
+    command -v sqlite3 >/dev/null 2>&1 && return 0
+    msg_err "蜂群存储需要 ${bold}sqlite3${reset}：apt install sqlite3 / brew install sqlite3"
+    return 1
+}
+
+# 生成实例 id: YYYY-MMDD-HHMM-<随机4位小写字母数字>，如 2026-0616-1356-aqzq
+_id_new() {
+    local rnd
+    rnd=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c4) || true
+    [[ ${#rnd} -eq 4 ]] || rnd=$(printf '%04x' $(( (RANDOM * 31 + RANDOM) & 0xffff )))
+    printf '%s-%s\n' "$(date +%Y-%m%d-%H%M)" "$rnd"
+}
+
+# 是否 id 形态(用于 name/id 二义解析)
+_is_id() { [[ "$1" =~ ^[0-9]{4}-[0-9]{4}-[0-9]{4}-[a-z0-9]{4}$ ]]; }
+
+# SQL 单引号转义(防注入)：单引号翻倍。用法: '$(_sqe "$v")'
+_sqe() { printf '%s' "${1:-}" | sed "s/'/''/g"; }
+
+# JSON 字符串转义：手拼 JSON 时给字符串值用（转 \ " 换行 制表，无 jq/python 依赖）。
+# 用法: "\"goal\":\"$(_jesc "$v")\""
+_jesc() {
+    local s="${1:-}"
+    s="${s//\\/\\\\}"; s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"; s="${s//$'\r'/\\r}"; s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
+# 查询封装
+_sql()  { sqlite3 "$1" "$2"; }            # 文本输出
+_sqlj() { sqlite3 -json "$1" "$2"; }      # JSON 输出(空结果回空串)
+
+# ── 全局索引库 meta.db ──
+_meta_db() { echo "${TTMUX_HOME}/meta.db"; }
+_meta_init() {
+    local db; db=$(_meta_db)
+    [[ -f "$db" ]] && return 0
+    mkdir -p "${TTMUX_HOME}"
+    sqlite3 "$db" "CREATE TABLE IF NOT EXISTS swarms(
+        id TEXT PRIMARY KEY,
+        name TEXT UNIQUE,
+        goal TEXT,
+        status TEXT,
+        supervisor TEXT,
+        created TEXT);"
+}
+
+# ── 每群库 swarm.db ──（$1 = 蜂群 id）
+_swarm_home()    { echo "${TTMUX_HOME}/swarms/${1}"; }
+_swarm_db()      { echo "$(_swarm_home "$1")/swarm.db"; }
+_swarm_logsdir() { echo "$(_swarm_home "$1")/logs"; }
+_swarm_db_init() {
+    local id="$1" db; db=$(_swarm_db "$id")
+    [[ -f "$db" ]] && return 0
+    mkdir -p "$(_swarm_logsdir "$id")"
+    sqlite3 "$db" >/dev/null "
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE IF NOT EXISTS members(
+            name TEXT PRIMARY KEY, type TEXT, task TEXT, workdir TEXT,
+            status TEXT, deps TEXT, done INT DEFAULT 0, pending INT DEFAULT 0,
+            model TEXT, perm TEXT);
+        CREATE TABLE IF NOT EXISTS posts(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT, author TEXT, kind TEXT, re INTEGER, text TEXT);
+        CREATE TABLE IF NOT EXISTS cards(
+            id TEXT PRIMARY KEY, title TEXT, descr TEXT, assignee TEXT,
+            col TEXT DEFAULT 'backlog', deps TEXT, created TEXT, updated TEXT);
+    "
+}
+
+# name 或 id -> id（id 直接返回；name 查 meta.db；查不到回空串）
+_swarm_resolve() {
+    if _is_id "$1"; then echo "$1"; return 0; fi
+    [[ -f "$(_meta_db)" ]] || return 0
+    sqlite3 "$(_meta_db)" "SELECT id FROM swarms WHERE name='$(_sqe "$1")' LIMIT 1;"
+}
 # ══════════════════════════════════════════
 # ── 全局环境变量 ──
 # ══════════════════════════════════════════
@@ -845,26 +937,30 @@ _kill_group() {
 # 成员就是底层任务组 <swarm> 的会话(<swarm>-<member>)，
 # 因此复用 _spawn_one / _status / _collect / _kill_group / _group_* 全套机制。
 #
-#   ${TTMUX_SWARMS}/<swarm>/
-#   ├── goal.txt        目标(可空)
-#   ├── status.txt      planning|running|integrating|done|archived
-#   ├── supervisor.txt  指挥的 cc 会话名(可空)
-#   ├── created.txt
-#   └── deps/<member>.txt  依赖的成员名(逗号分隔, 仅有依赖时存在)
+# 存储已迁 SQLite（地基在 lib/store.sh，详见 ttmux-cli/README.md）：
+#   ${TTMUX_HOME}/meta.db                全局: swarms(id,name,goal,status,supervisor,created)
+#   ${TTMUX_HOME}/swarms/<id>/swarm.db    每群: members(含 deps/done/pending 列)/posts/cards
+#   ${TTMUX_HOME}/swarms/<id>/logs/        成员终端日志(文件)
+# 成员仍是 tmux 会话 <name>-<member>（运行时走组机器）；下列 helper 对外以「蜂群名」为接口，内部 name→id。
 
-_swarm_dir()    { echo "${TTMUX_SWARMS}/${1}"; }
-_swarm_exists() { [[ -d "$(_swarm_dir "$1")" ]]; }
+# name 或 id -> id（查 meta.db；查不到回空）
+_swarm_id() { _swarm_resolve "$1"; }
+# 蜂群目录 / 是否存在（基于 meta.db）
+_swarm_dir()    { local id; id=$(_swarm_id "$1"); [[ -n "$id" ]] && _swarm_home "$id"; }
+_swarm_exists() { [[ -n "$(_swarm_id "$1")" ]]; }
+# 规范蜂群名（运行时会话/组用名，不用 id）
+_swarm_name() { _meta_init; sqlite3 "$(_meta_db)" "SELECT name FROM swarms WHERE name='$(_sqe "$1")' OR id='$(_sqe "$1")' LIMIT 1;"; }
+# 当前蜂群的 swarm.db（确保已建表）
+_swarm_db_of() { local id; id=$(_swarm_id "$1"); [[ -n "$id" ]] || return 1; _swarm_db_init "$id"; _swarm_db "$id"; }
 
-# _swarm_meta_get <swarm> <key>   -> 输出值(无则空)
+# 蜂群级元数据 <-> meta.db 列（key 为内部常量 goal/status/supervisor/created）
 _swarm_meta_get() {
-    local f="$(_swarm_dir "$1")/${2}.txt"
-    [[ -f "$f" ]] && cat "$f" || true
+    _meta_init
+    sqlite3 "$(_meta_db)" "SELECT IFNULL(${2},'') FROM swarms WHERE name='$(_sqe "$1")' OR id='$(_sqe "$1")' LIMIT 1;"
 }
-# _swarm_meta_set <swarm> <key> <value>
 _swarm_meta_set() {
-    local dir; dir=$(_swarm_dir "$1")
-    mkdir -p "$dir"
-    printf '%s\n' "$3" > "${dir}/${2}.txt"
+    _meta_init
+    sqlite3 "$(_meta_db)" "UPDATE swarms SET ${2}='$(_sqe "$3")' WHERE name='$(_sqe "$1")' OR id='$(_sqe "$1")';"
 }
 
 # 成员显示名: 去掉 "<swarm>-" 前缀
@@ -873,62 +969,54 @@ _swarm_member_name() {
     echo "${sess#"${swarm}"-}"
 }
 
-# 依赖读写
-_swarm_dep_get() { local f="$(_swarm_dir "$1")/deps/${2}.txt"; [[ -f "$f" ]] && cat "$f" || true; }
+# 成员依赖读写 <-> members.deps 列（行不存在则 upsert）
+_swarm_dep_get() {
+    local db; db=$(_swarm_db_of "$1") || return 0
+    sqlite3 "$db" "SELECT IFNULL(deps,'') FROM members WHERE name='$(_sqe "$2")';"
+}
 _swarm_dep_set() {
-    local dir="$(_swarm_dir "$1")/deps"
-    mkdir -p "$dir"
-    printf '%s\n' "$3" > "${dir}/${2}.txt"
+    local db; db=$(_swarm_db_of "$1") || return 1
+    sqlite3 "$db" "INSERT INTO members(name,deps) VALUES('$(_sqe "$2")','$(_sqe "$3")')
+        ON CONFLICT(name) DO UPDATE SET deps=excluded.deps;"
 }
 
-# ── 完成标记：指挥(cc)判定成员已完成后显式打标，供依赖解锁 ──
-#
-# agent 成员是长驻会话(claude 不退出)，pane_dead 永不触发，靠脚本判不出「完成」。
-# 因此由指挥读输出做 AI 判断，再 `ttmux swarm done <群> <成员>` 打标记：
-#   ${TTMUX_SWARMS}/<群>/done/<成员>   (空文件即标记)
-# _swarm_member_done 优先认这个标记，于是下游依赖随之解锁。
-_swarm_done_dir() { echo "$(_swarm_dir "$1")/done"; }
-_swarm_member_marked_done() { [[ -f "$(_swarm_done_dir "$1")/${2}" ]]; }
+# ── 完成标记 <-> members.done 列 ──
+# agent 成员长驻(claude 不退出)，pane_dead 永不触发；由指挥 `swarm done <群> <成员>` 打标记 done=1，
+# _swarm_member_done 优先认它，于是下游依赖随之解锁。
+_swarm_member_marked_done() {
+    local db; db=$(_swarm_db_of "$1") || return 1
+    [[ "$(sqlite3 "$db" "SELECT IFNULL(done,0) FROM members WHERE name='$(_sqe "$2")';")" == "1" ]]
+}
 _swarm_member_mark_done() {
-    local d; d=$(_swarm_done_dir "$1"); mkdir -p "$d"; : > "${d}/${2}"
+    local db; db=$(_swarm_db_of "$1") || return 1
+    sqlite3 "$db" "INSERT INTO members(name,done) VALUES('$(_sqe "$2")',1)
+        ON CONFLICT(name) DO UPDATE SET done=1;"
 }
 # 列出已显式标记完成的成员名(每行一个)
 _swarm_done_list() {
-    local root; root=$(_swarm_done_dir "$1")
-    [[ -d "$root" ]] || return 0
-    shopt -s nullglob
-    local f
-    for f in "$root"/*; do basename "$f"; done
+    local db; db=$(_swarm_db_of "$1") || return 0
+    sqlite3 "$db" "SELECT name FROM members WHERE done=1 ORDER BY name;"
 }
 
-# ── 依赖门控：pending 成员存储 + 解锁 ──
-#
-# 有依赖且依赖未满足的成员不立即 spawn，而是挂起为 pending：
-#   ${TTMUX_SWARMS}/<群>/pending/<成员>/{type,payload,workdir,model,perm}.txt
-# 依赖满足后由 _swarm_activate 取出 spec 真正 spawn 并清除 pending。
-
-_swarm_pending_root() { echo "$(_swarm_dir "$1")/pending"; }
-_swarm_pending_dir()  { echo "$(_swarm_dir "$1")/pending/${2}"; }
+# ── 依赖门控：pending 成员 <-> members.pending 列 + 规格列(type/task/workdir/model/perm) ──
+# 有依赖且未满足的成员 pending=1 不 spawn；满足后 _swarm_activate 取规格真正 spawn、置 pending=0。
 
 # _swarm_pending_set <群> <成员> <type> <payload> <workdir> <model> <perm>
 _swarm_pending_set() {
-    local d; d=$(_swarm_pending_dir "$1" "$2")
-    mkdir -p "$d"
-    printf '%s\n' "$3" > "${d}/type.txt"
-    printf '%s\n' "$4" > "${d}/payload.txt"
-    printf '%s\n' "$5" > "${d}/workdir.txt"
-    printf '%s\n' "$6" > "${d}/model.txt"
-    printf '%s\n' "$7" > "${d}/perm.txt"
+    local db; db=$(_swarm_db_of "$1") || return 1
+    sqlite3 "$db" "INSERT INTO members(name,type,task,workdir,model,perm,pending)
+        VALUES('$(_sqe "$2")','$(_sqe "$3")','$(_sqe "$4")','$(_sqe "$5")','$(_sqe "$6")','$(_sqe "$7")',1)
+        ON CONFLICT(name) DO UPDATE SET type=excluded.type,task=excluded.task,
+            workdir=excluded.workdir,model=excluded.model,perm=excluded.perm,pending=1;"
 }
-_swarm_pending_clear() { rm -rf "$(_swarm_pending_dir "$1" "$2")"; }
-
+_swarm_pending_clear() {
+    local db; db=$(_swarm_db_of "$1") || return 1
+    sqlite3 "$db" "UPDATE members SET pending=0 WHERE name='$(_sqe "$2")';"
+}
 # 列出 pending 成员名（每行一个）
 _swarm_pending_list() {
-    local root; root=$(_swarm_pending_root "$1")
-    [[ -d "$root" ]] || return 0
-    shopt -s nullglob
-    local d
-    for d in "$root"/*/; do basename "$d"; done
+    local db; db=$(_swarm_db_of "$1") || return 0
+    sqlite3 "$db" "SELECT name FROM members WHERE pending=1 ORDER BY name;"
 }
 
 # 成员是否已完成（用于依赖解锁）：
@@ -962,23 +1050,23 @@ _swarm_deps_satisfied() {
     return 0
 }
 
-# 取出 pending spec 并真正 spawn 一个成员
+# 取出 pending 成员规格(members 行)并真正 spawn
 _swarm_spawn_pending() {
     local swarm="$1" member="$2"
-    local d; d=$(_swarm_pending_dir "$swarm" "$member")
-    local type payload workdir model perm
-    type=$(cat "${d}/type.txt" 2>/dev/null)
-    payload=$(cat "${d}/payload.txt" 2>/dev/null)
-    workdir=$(cat "${d}/workdir.txt" 2>/dev/null)
-    model=$(cat "${d}/model.txt" 2>/dev/null)
-    perm=$(cat "${d}/perm.txt" 2>/dev/null)
+    local db; db=$(_swarm_db_of "$swarm") || return 1
+    local type task workdir model perm
+    type=$(sqlite3 "$db" "SELECT IFNULL(type,'agent') FROM members WHERE name='$(_sqe "$member")';")
+    task=$(sqlite3 "$db" "SELECT IFNULL(task,'') FROM members WHERE name='$(_sqe "$member")';")
+    workdir=$(sqlite3 "$db" "SELECT IFNULL(workdir,'') FROM members WHERE name='$(_sqe "$member")';")
+    model=$(sqlite3 "$db" "SELECT IFNULL(model,'') FROM members WHERE name='$(_sqe "$member")';")
+    perm=$(sqlite3 "$db" "SELECT IFNULL(perm,'') FROM members WHERE name='$(_sqe "$member")';")
     if [[ "$type" == "agent" ]]; then
         _agent_defaults
         AGENT_WORKDIR="$workdir"
         [[ -n "$model" ]] && AGENT_MODEL="$model"
         [[ -n "$perm" ]]  && AGENT_PERMISSION="$perm"
     fi
-    _spawn_one "$swarm" "$member" "$type" "$payload" "$workdir"
+    _spawn_one "$swarm" "$member" "$type" "$task" "$workdir"
 }
 
 # ttmux swarm activate <群> [成员] [--quiet] [--force]
@@ -1039,21 +1127,33 @@ _swarm_new() {
         msg_warn "蜂群 ${bold}${name}${reset} 已存在"
         return 1
     fi
-    local goal=""
+    _need_sqlite || return 1
+    local goal="" no_master=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --goal) goal="$2"; shift 2 ;;
+            --goal)      goal="$2"; shift 2 ;;
+            --no-master) no_master=1; shift ;;
             *) shift ;;
         esac
     done
-    mkdir -p "$(_swarm_dir "$name")"
-    _swarm_meta_set "$name" goal "$goal"
-    _swarm_meta_set "$name" status "planning"
-    _swarm_meta_set "$name" supervisor ""
-    _swarm_meta_set "$name" created "$(date '+%Y-%m-%d %H:%M:%S')"
-    msg_ok "蜂群 ${bold}${name}${reset} 已创建"
+    _meta_init
+    local id; id=$(_id_new)
+    sqlite3 "$(_meta_db)" "INSERT INTO swarms(id,name,goal,status,supervisor,created)
+        VALUES('$(_sqe "$id")','$(_sqe "$name")','$(_sqe "$goal")','planning','','$(date '+%Y-%m-%d %H:%M:%S')');"
+    _swarm_db_init "$id"
+    msg_ok "蜂群 ${bold}${name}${reset} 已创建 ${dim}(${id})${reset}"
     [[ -n "$goal" ]] && echo -e "   ${dim}目标: ${goal}${reset}"
     echo -e "   ${dim}加成员: ttmux swarm add ${name} <名> --type agent \"<任务>\"${reset}"
+    # 自带 master：建群即拉起一个加载了 cc-swarm skill 的指挥会话(cc-<群>)，它已被告知如何操作 swarm CLI。
+    # --no-master 跳过(纯元数据/测试)；缺 claude/tmux 时降级为提示，不中断。
+    if [[ -z "$no_master" ]]; then
+        if command -v claude >/dev/null 2>&1 && [[ -n "${TMUX_BIN}" ]]; then
+            echo -e "   ${dim}拉起指挥(master) cc-${name} …${reset}"
+            _swarm_adopt "$name" || msg_warn "指挥拉起失败，可稍后手动: ${dim}ttmux swarm adopt ${name}${reset}"
+        else
+            msg_info "未检测到 claude/tmux，未拉起指挥；装好后手动接管: ${dim}ttmux swarm adopt ${name}${reset}"
+        fi
+    fi
 }
 
 # ttmux swarm add <群> <成员> [--type task|agent] [--dir/--perm/--model] [--depends-on a,b] <payload...>
@@ -1111,6 +1211,12 @@ _swarm_add() {
 
     # 成员 = 任务组 <swarm> 的会话；底层类型 agent 走 claude，task 走 shell
     if _spawn_one "$swarm" "$member" "$type" "$payload" "$workdir"; then
+        # 登记成员行(非挂起)，供 done/状态追踪
+        local mdb; mdb=$(_swarm_db_of "$swarm") || true
+        [[ -n "$mdb" ]] && sqlite3 "$mdb" "INSERT INTO members(name,type,task,workdir,model,perm,pending,done)
+            VALUES('$(_sqe "$member")','$(_sqe "$type")','$(_sqe "$payload")','$(_sqe "$workdir")','$(_sqe "$model")','$(_sqe "$perm")',0,0)
+            ON CONFLICT(name) DO UPDATE SET type=excluded.type,task=excluded.task,
+                workdir=excluded.workdir,model=excluded.model,perm=excluded.perm,pending=0;"
         _swarm_meta_set "$swarm" status "running"
         local suffix=""; (( ${#payload} > 60 )) && suffix="..."
         msg_ok "成员 ${bold}${member}${reset} (${type}): ${dim}${payload:0:60}${suffix}${reset}"
@@ -1120,21 +1226,46 @@ _swarm_add() {
     return 1
 }
 
-# ttmux swarm ls
+# ttmux swarm ls [--json]
 _swarm_ls() {
-    shopt -s nullglob
-    local dirs=("${TTMUX_SWARMS}"/*/)
-    if [[ ${#dirs[@]} -eq 0 ]]; then
+    _meta_init
+    local json=""
+    [[ "${1:-}" == "--json" ]] && json=1
+    # 用 \x1f 而非 \t 分隔：tab 属空白类 IFS，空字段(如无 goal)会折叠致串列
+    if [[ -n "$json" ]]; then
+        local jrows; jrows=$(sqlite3 -separator $'\x1f' "$(_meta_db)" \
+            "SELECT id,name,IFNULL(goal,''),IFNULL(status,''),IFNULL(supervisor,''),IFNULL(created,'') FROM swarms ORDER BY created;")
+        echo "["
+        local jfirst=1 jid jname jgoal jstatus jsup jcreated
+        while IFS=$'\x1f' read -r jid jname jgoal jstatus jsup jcreated; do
+            [[ -n "$jname" ]] || continue
+            local jt=0 ja=0 jsess
+            while IFS= read -r jsess; do
+                [[ -n "$jsess" ]] || continue
+                ((jt++)) || true
+                _session_exists "$jsess" && ((ja++)) || true
+            done < <(_group_sessions "$jname")
+            local jp; jp=$(_swarm_pending_list "$jname" | grep -c . || true)
+            (( jfirst )) || echo ","
+            jfirst=0
+            printf '  {"id":"%s","name":"%s","goal":"%s","status":"%s","supervisor":"%s","created":"%s","total":%d,"alive":%d,"pending":%d}' \
+                "$(_jesc "$jid")" "$(_jesc "$jname")" "$(_jesc "$jgoal")" "$(_jesc "$jstatus")" "$(_jesc "$jsup")" "$(_jesc "$jcreated")" "$jt" "$ja" "$jp"
+        done <<< "$jrows"
+        echo ""
+        echo "]"
+        return 0
+    fi
+    local rows; rows=$(sqlite3 -separator $'\x1f' "$(_meta_db)" \
+        "SELECT name,IFNULL(goal,''),IFNULL(status,''),IFNULL(supervisor,'') FROM swarms ORDER BY created;")
+    if [[ -z "$rows" ]]; then
         msg_info "没有蜂群  ${dim}(ttmux swarm new <名> 创建)${reset}"
         return
     fi
     echo ""
-    for d in "${dirs[@]}"; do
-        local name; name=$(basename "$d")
-        local goal status sup total=0 alive=0
-        goal=$(_swarm_meta_get "$name" goal)
-        status=$(_swarm_meta_get "$name" status)
-        sup=$(_swarm_meta_get "$name" supervisor)
+    local name goal status sup
+    while IFS=$'\x1f' read -r name goal status sup; do
+        [[ -n "$name" ]] || continue
+        local total=0 alive=0
         while IFS= read -r sess; do
             [[ -n "$sess" ]] || continue
             ((total++)) || true
@@ -1153,14 +1284,77 @@ _swarm_ls() {
         local pend_str=""; (( pend > 0 )) && pend_str="  ${yellow}+${pend}待解锁${reset}"
         echo -e "   ${icon_group} ${bold}${name}${reset}  ${dim}${alive}/${total} 活跃${reset}${pend_str}  ${st_str}$( [[ -n "$sup" ]] && echo "  ${magenta}◆${sup}${reset}" )"
         [[ -n "$goal" ]] && echo -e "       ${dim}${goal}${reset}"
-    done
+    done <<< "$rows"
+    echo -e "  ${dim}钻取: ttmux swarm status <群>(含看板/广场) · board <群> · feed <群>${reset}"
     echo ""
 }
 
-# ttmux swarm status <群>
-_swarm_status() {
+# ttmux swarm status <群> --json — 结构化输出(给 web/巡检)
+# {name,goal,status,supervisor,created, members:[{name,type,task,deps,done,status,session}], pending:[{name,deps}], done_marked:[...]}
+_swarm_status_json() {
     local name="$1"
+    _swarm_activate "$name" --quiet >/dev/null 2>&1 || true
+    local goal status sup created db
+    goal=$(_swarm_meta_get "$name" goal)
+    status=$(_swarm_meta_get "$name" status)
+    sup=$(_swarm_meta_get "$name" supervisor)
+    created=$(_swarm_meta_get "$name" created)
+    db=$(_swarm_db_of "$name" 2>/dev/null || true)
+    printf '{"name":"%s","goal":"%s","status":"%s","supervisor":"%s","created":"%s","members":[' \
+        "$(_jesc "$name")" "$(_jesc "$goal")" "$(_jesc "$status")" "$(_jesc "$sup")" "$(_jesc "$created")"
+    local first=1
+    if [[ -n "$db" ]]; then
+        local rows mname mtype mtask mdeps mdone
+        rows=$(sqlite3 -separator $'\x1f' "$db" \
+            "SELECT name,IFNULL(type,'agent'),IFNULL(task,''),IFNULL(deps,''),IFNULL(done,0) FROM members WHERE IFNULL(pending,0)=0 ORDER BY name;")
+        while IFS=$'\x1f' read -r mname mtype mtask mdeps mdone; do
+            [[ -n "$mname" ]] || continue
+            local sess="${name}-${mname}" lst="exited"
+            if _session_exists "$sess"; then
+                local dead; dead=$("$TMUX_BIN" display-message -t "$sess" -p '#{pane_dead}' 2>/dev/null || echo 0)
+                if [[ "$dead" == "1" ]]; then lst="done"; else lst="running"; fi
+            elif [[ -f "${TTMUX_LOGS}/${sess}.log" ]]; then lst="done"; fi
+            (( first )) || printf ','
+            first=0
+            printf '{"name":"%s","type":"%s","task":"%s","deps":"%s","done":%s,"status":"%s","session":"%s"}' \
+                "$(_jesc "$mname")" "$(_jesc "$mtype")" "$(_jesc "$mtask")" "$(_jesc "$mdeps")" "${mdone:-0}" "$lst" "$(_jesc "$sess")"
+        done <<< "$rows"
+    fi
+    printf '],"pending":['
+    first=1
+    if [[ -n "$db" ]]; then
+        local prows pn pd
+        prows=$(sqlite3 -separator $'\x1f' "$db" "SELECT name,IFNULL(deps,'') FROM members WHERE pending=1 ORDER BY name;")
+        while IFS=$'\x1f' read -r pn pd; do
+            [[ -n "$pn" ]] || continue
+            (( first )) || printf ','
+            first=0
+            printf '{"name":"%s","deps":"%s"}' "$(_jesc "$pn")" "$(_jesc "$pd")"
+        done <<< "$prows"
+    fi
+    printf '],"done_marked":['
+    first=1
+    local dn
+    while IFS= read -r dn; do
+        [[ -n "$dn" ]] || continue
+        (( first )) || printf ','
+        first=0
+        printf '"%s"' "$(_jesc "$dn")"
+    done < <(_swarm_done_list "$name")
+    printf ']}\n'
+}
+
+# ttmux swarm status <群> [--json]
+_swarm_status() {
+    local name="" json=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json) json=1; shift ;;
+            *)      name="$1"; shift ;;
+        esac
+    done
     if ! _swarm_exists "$name"; then msg_err "蜂群不存在: ${name}"; return 1; fi
+    if [[ -n "$json" ]]; then _swarm_status_json "$name"; return $?; fi
     # 巡检/查看顺手解锁依赖已满足的 pending 成员（静默）
     _swarm_activate "$name" --quiet >/dev/null 2>&1 || true
     local goal status sup created
@@ -1200,6 +1394,27 @@ _swarm_status() {
     # 指挥已显式标记完成的成员(供解锁参考)
     local dm; dm=$(_swarm_done_list "$name" | paste -sd, - 2>/dev/null || true)
     [[ -n "$dm" ]] && echo -e "  ${dim}✔ 已标记完成: ${dm}${reset}"
+
+    # ── 看板摘要（按列计数）──
+    local db; db=$(_swarm_db_of "$name" 2>/dev/null || true)
+    if [[ -n "$db" ]]; then
+        local ncards; ncards=$(sqlite3 "$db" "SELECT count(*) FROM cards;" 2>/dev/null || echo 0)
+        if (( ncards > 0 )); then
+            local seg="" c cnt
+            for c in $_BOARD_COLS; do
+                cnt=$(sqlite3 "$db" "SELECT count(*) FROM cards WHERE col='$c';" 2>/dev/null || echo 0)
+                (( cnt > 0 )) && seg="${seg}${seg:+  }$(_board_col_label "$c") ${cnt}"
+            done
+            echo -e "  ${dim}── 看板 ──${reset}  ${seg}   ${dim}(ttmux swarm board ${name})${reset}"
+        fi
+        # ── 广场最近 3 条 ──
+        local prows; prows=$(sqlite3 -separator $'\x1f' "$db" \
+            "SELECT id,ts,author,kind,IFNULL(re,''),text FROM (SELECT * FROM posts ORDER BY id DESC LIMIT 3) ORDER BY id;" 2>/dev/null || true)
+        if [[ -n "$prows" ]]; then
+            echo -e "  ${dim}── 广场(最近3条) ──${reset}   ${dim}(ttmux swarm feed ${name})${reset}"
+            _plaza_render_rows <<< "$prows"
+        fi
+    fi
     return 0
 }
 
@@ -1233,7 +1448,11 @@ _swarm_adopt() {
     _swarm_meta_set "$swarm" supervisor "$cc"
     _swarm_meta_set "$swarm" status "running"
 
+    # 指挥入口：作用域锁定到本蜂群；若蜂群有目标，把目标作为输入 → cc-swarm 直接对目标走全流程
+    # (接需求→拆任务→开成员→巡检→集成)，而非仅监护。详见 skills/cc-swarm/SKILL.md「--swarm <名> [目标]」。
+    local goal; goal=$(_swarm_meta_get "$swarm" goal)
     local invoke="/cc-swarm --swarm ${swarm}"
+    [[ -n "$goal" ]] && invoke="${invoke} ${goal}"
     if _session_exists "$cc"; then
         # 复用已有 cc 会话：直接发指令
         "$TMUX_BIN" send-keys -t "$cc" "$invoke" C-m
@@ -1241,13 +1460,16 @@ _swarm_adopt() {
     else
         # 新建交互式 claude 会话作为指挥
         local claude_bin; claude_bin="$(command -v claude || echo claude)"
+        # 单引号上下文转义：' -> '\''（防目标里含单引号把命令截断）
+        local invoke_esc=${invoke//\'/\'\\\'\'}
         "$TMUX_BIN" new-session -d -s "$cc" -x 220 -y 50
         _inject_env "$cc"
         "$TMUX_BIN" pipe-pane -t "$cc" -o "cat >> '${TTMUX_LOGS}/${cc}.log'"
         : > "${TTMUX_LOGS}/${cc}.log"
         # 用初始 prompt 直接拉起 cc-swarm 监护(交互式，便于审批/追加指令)
-        "$TMUX_BIN" send-keys -t "$cc" "cd '${dir}' && ${claude_bin} '${invoke}'" C-m
+        "$TMUX_BIN" send-keys -t "$cc" "cd '${dir}' && ${claude_bin} '${invoke_esc}'" C-m
         msg_ok "已拉起指挥会话 ${bold}${cc}${reset} 接管蜂群 ${bold}${swarm}${reset}"
+        [[ -n "$goal" ]] && echo -e "   ${dim}目标已交给指挥: ${goal}${reset}"
     fi
     echo -e "   ${dim}附加查看:  ttmux a ${cc}${reset}"
     echo -e "   ${dim}若指挥未自动开始，附加后手动发:  ${invoke}${reset}"
@@ -1289,8 +1511,28 @@ _swarm_rm() {
         msg_info "已取消"; return 0
     fi
     _group_exists "$name" && _kill_group "$name" >/dev/null 2>&1 || true
-    rm -rf "$(_swarm_dir "$name")"
+    local id dir; id=$(_swarm_id "$name"); dir=$(_swarm_dir "$name")
+    [[ -n "$id" ]] && sqlite3 "$(_meta_db)" "DELETE FROM swarms WHERE id='$(_sqe "$id")';"
+    [[ -n "$dir" ]] && rm -rf "$dir"
     msg_ok "蜂群 ${bold}${name}${reset} 已删除"
+}
+
+# ttmux swarm sql <群> [--json] "<SELECT ...>"  — 只读逃生口(给 web/调试查每群 swarm.db)
+_swarm_sql() {
+    local name="$1"; shift || true
+    if ! _swarm_exists "$name"; then msg_err "蜂群不存在: ${name}"; return 1; fi
+    local json=""
+    [[ "${1:-}" == "--json" ]] && { json=1; shift; }
+    local q="${1:-}"
+    [[ -n "$q" ]] || { msg_err '用法: ttmux swarm sql <群> [--json] "SELECT ..."'; return 1; }
+    # 只读守卫：仅允许查询类语句开头
+    local head; head=$(printf '%s' "$q" | sed -E 's/^[[:space:]]*//' | tr 'A-Z' 'a-z')
+    case "$head" in
+        select*|pragma*|explain*|with*|.tables*|.schema*) : ;;
+        *) msg_err "只读逃生口：仅允许 SELECT/PRAGMA/EXPLAIN/WITH/.tables/.schema"; return 1 ;;
+    esac
+    local db; db=$(_swarm_db_of "$name") || return 1
+    if [[ -n "$json" ]]; then sqlite3 -json "$db" "$q"; else sqlite3 -header -column "$db" "$q"; fi
 }
 
 # ══════════════════════════════════════════
@@ -1301,10 +1543,10 @@ _swarm_rm() {
 _pick_swarm() {
     local prompt="${1:-选择蜂群}"
     local swarms=()
-    shopt -s nullglob
-    for d in "${TTMUX_SWARMS}"/*/; do
-        swarms+=("$(basename "$d")")
-    done
+    _meta_init
+    while IFS= read -r s; do
+        [[ -n "$s" ]] && swarms+=("$s")
+    done < <(sqlite3 "$(_meta_db)" "SELECT name FROM swarms ORDER BY created;")
     if [[ ${#swarms[@]} -eq 0 ]]; then
         msg_info "没有蜂群" >&2
         return 1
@@ -1433,6 +1675,49 @@ _interactive_swarm_mark_done() {
     fi
 }
 
+# 第二层子界面：广场（看 + 发）
+_interactive_swarm_plaza() {
+    local swarm="$1"
+    while true; do
+        clear
+        _plaza_feed "$swarm"
+        echo -e "  ${bold}广场 ${swarm}${reset}    ${cyan}s${reset}) 发言   ${cyan}r${reset}) 刷新   ${cyan}b${reset}) 返回"
+        read -r -p "  选择: " a </dev/tty
+        case "$a" in
+            s)
+                read -r -p "  消息: " msg </dev/tty
+                if [[ -n "$msg" ]]; then
+                    read -r -p "  类型(回车=note, 可: ask/block/decide/done/broadcast): " k </dev/tty
+                    _plaza_say "$swarm" --kind "${k:-note}" "$msg" || true; _interactive_pause
+                fi ;;
+            b|q|"") return ;;
+            *) : ;;
+        esac
+    done
+}
+
+# 第二层子界面：看板（看 + 建卡/派活/流转）
+_interactive_swarm_board() {
+    local swarm="$1"
+    while true; do
+        clear
+        _board_render "$swarm"
+        echo -e "  ${bold}看板 ${swarm}${reset}  ${cyan}n${reset}) 建卡  ${cyan}g${reset}) 派活  ${cyan}v${reset}) 移动  ${cyan}r${reset}) 刷新  ${cyan}b${reset}) 返回"
+        read -r -p "  选择: " a </dev/tty
+        case "$a" in
+            n)  read -r -p "  卡片标题: " title </dev/tty
+                [[ -n "$title" ]] && { _board_add "$swarm" "$title" >/dev/null || true; _interactive_pause; } ;;
+            g)  read -r -p "  卡id: " cid </dev/tty; read -r -p "  派给成员: " who </dev/tty
+                [[ -n "$cid" && -n "$who" ]] && { _board_assign "$swarm" "$cid" "$who" || true; _interactive_pause; } ;;
+            v)  read -r -p "  卡id: " cid </dev/tty
+                read -r -p "  移到列(backlog/assigned/doing/review/done/blocked): " col </dev/tty
+                [[ -n "$cid" && -n "$col" ]] && { _board_move "$swarm" "$cid" "$col" || true; _interactive_pause; } ;;
+            b|q|"") return ;;
+            *) : ;;
+        esac
+    done
+}
+
 # 第二层主循环：蜂群详情 / 成员管理
 _interactive_swarm_detail() {
     local swarm="$1"
@@ -1442,6 +1727,7 @@ _interactive_swarm_detail() {
         echo ""
         echo -e "  ${bold}蜂群 ${swarm} ─ 成员管理${reset}"
         echo -e "    ${cyan}a${reset}) 加成员            ${cyan}m${reset}) 追加指令"
+        echo -e "    ${cyan}p${reset}) 广场 ▸            ${cyan}t${reset}) 看板 ▸"
         echo -e "    ${cyan}f${reset}) 标记成员完成      ${cyan}u${reset}) 解锁挂起成员"
         echo -e "    ${cyan}c${reset}) 等待并收集        ${cyan}d${reset}) cc 接管"
         echo -e "    ${cyan}k${reset}) 清理整群          ${cyan}b${reset}) 返回上层"
@@ -1451,6 +1737,8 @@ _interactive_swarm_detail() {
         case "$act" in
             a) _interactive_swarm_add_member "$swarm" || true; _interactive_pause ;;
             m) _interactive_swarm_send "$swarm" || true; _interactive_pause ;;
+            p) _interactive_swarm_plaza "$swarm" || true ;;
+            t) _interactive_swarm_board "$swarm" || true ;;
             f) _interactive_swarm_mark_done "$swarm" || true; _interactive_pause ;;
             u) _swarm_activate "$swarm" || true; _interactive_pause ;;
             c) _do_wait_group "$swarm" 300 || true; echo ""; _swarm_collect "$swarm" text || true; _interactive_pause ;;
@@ -1503,6 +1791,338 @@ _interactive_swarm() {
     done
 }
 # ══════════════════════════════════════════
+# ── plaza: 蜂群广场（异步消息流）──
+# ══════════════════════════════════════════
+#
+# 全群共享的追加型消息流；成员/master/human 都能发都能读。
+# 存每群 swarms/<id>/swarm.db 的 posts 表(WAL 并发安全)。详见 ttmux-cli/README.md。
+# kind: note(随手记) ask(提问) block(报阻塞) decide(决策) done(完成播报) broadcast(全员广播)
+
+# 自动署名：按当前 tmux 会话名推断作者
+#   <群>-<成员> -> 成员;  cc-<群> 或 supervisor -> master;  否则 human
+_plaza_author() {
+    local swarm="$1" sname sess sup
+    sname=$(_swarm_name "$swarm")
+    sess=$("$TMUX_BIN" display-message -p '#{session_name}' 2>/dev/null || true)
+    [[ -n "$sess" ]] || { echo "human"; return; }
+    sup=$(_swarm_meta_get "$swarm" supervisor 2>/dev/null || true)
+    if [[ -n "$sup" && "$sess" == "$sup" ]]; then echo "master"; return; fi
+    if [[ "$sess" == "cc-${sname}" ]]; then echo "master"; return; fi
+    if [[ -n "$sname" && "$sess" == "${sname}-"* ]]; then echo "${sess#"${sname}"-}"; return; fi
+    echo "human"
+}
+
+_plaza_kind_icon() {
+    case "$1" in
+        broadcast) echo "📢" ;;
+        done)      echo "${green}✔${reset}" ;;
+        ask)       echo "${yellow}?${reset}" ;;
+        decide)    echo "${cyan}◎${reset}" ;;
+        block)     echo "${red}!${reset}" ;;
+        *)         echo "${dim}·${reset}" ;;
+    esac
+}
+
+# 渲染一批消息行（stdin: 用 US(\x1f) 分隔的 id ts author kind re text）
+# 用 \x1f 而非 \t：tab 属空白类 IFS，连续 tab 会折叠致空字段(空 re)串列。
+_plaza_render_rows() {
+    local id ts author kind re text icon who reref hhmm
+    while IFS=$'\x1f' read -r id ts author kind re text; do
+        [[ -n "$id" ]] || continue
+        icon=$(_plaza_kind_icon "$kind")
+        case "$author" in
+            master) who="${magenta}◆ ${author}${reset}" ;;
+            human)  who="${blue}● ${author}${reset}" ;;
+            *)      who="${green}● ${author}${reset}" ;;
+        esac
+        reref=""; [[ -n "$re" ]] && reref=" ${dim}⤷#${re}${reset}"
+        hhmm="${ts:11:5}"
+        echo -e "  ${dim}#${id} ${hhmm}${reset}  ${who}  ${icon}${reref} ${text}"
+    done
+}
+
+# ttmux swarm say <群> [--as <成员>] [--kind <类型>] [--re <id>] <消息...>
+_plaza_say() {
+    local swarm="$1"; shift || true
+    if ! _swarm_exists "$swarm"; then msg_err "蜂群不存在: ${swarm}"; return 1; fi
+    local as="" kind="note" re="" parts=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --as)   as="$2"; shift 2 ;;
+            --kind) kind="$2"; shift 2 ;;
+            --re)   re="$2"; shift 2 ;;
+            *)      parts+=("$1"); shift ;;
+        esac
+    done
+    local text="${parts[*]}"
+    [[ -n "$text" ]] || { msg_err "消息不能为空"; return 1; }
+    local author="$as"
+    [[ -n "$author" ]] || author=$(_plaza_author "$swarm")
+    local reval="NULL"; [[ "$re" =~ ^[0-9]+$ ]] && reval="$re"
+    local db id; db=$(_swarm_db_of "$swarm") || return 1
+    # 同一连接内 INSERT + 取自增 id（last_insert_rowid 按连接，分两次调用会拿到 0）
+    id=$(sqlite3 "$db" "INSERT INTO posts(ts,author,kind,re,text)
+        VALUES(datetime('now','localtime'),'$(_sqe "$author")','$(_sqe "$kind")',${reval},'$(_sqe "$text")');
+        SELECT last_insert_rowid();")
+    msg_ok "#${id} 已发布 ${dim}(${author}/${kind})${reset}"
+}
+
+# 构造 feed 的 WHERE 子句（公共）
+_plaza_where() {  # <from> <kind> <since>
+    local where="1=1"
+    [[ -n "$1" ]] && where="$where AND author='$(_sqe "$1")'"
+    [[ -n "$2" ]] && where="$where AND kind='$(_sqe "$2")'"
+    [[ -n "$3" && "$3" =~ ^[0-9]+$ ]] && where="$where AND id>${3}"
+    echo "$where"
+}
+
+# ttmux swarm feed <群> [-n N] [--from <成员>] [--kind <类型>] [--since <id>] [--json]
+_plaza_feed() {
+    local swarm="$1"; shift || true
+    if ! _swarm_exists "$swarm"; then msg_err "蜂群不存在: ${swarm}"; return 1; fi
+    local n=30 from="" kind="" since="" json=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n|--lines) n="$2"; shift 2 ;;
+            --from)  from="$2"; shift 2 ;;
+            --kind)  kind="$2"; shift 2 ;;
+            --since) since="$2"; shift 2 ;;
+            --json)  json=1; shift ;;
+            *) shift ;;
+        esac
+    done
+    [[ "$n" =~ ^[0-9]+$ ]] || n=30
+    local db where; db=$(_swarm_db_of "$swarm") || return 1
+    where=$(_plaza_where "$from" "$kind" "$since")
+    if [[ -n "$json" ]]; then
+        sqlite3 -json "$db" "SELECT id,ts,author,kind,re,text FROM
+            (SELECT * FROM posts WHERE ${where} ORDER BY id DESC LIMIT ${n}) ORDER BY id;"
+        return 0
+    fi
+    local rows; rows=$(sqlite3 -separator $'\x1f' "$db" "SELECT id,ts,author,kind,IFNULL(re,''),text FROM
+        (SELECT * FROM posts WHERE ${where} ORDER BY id DESC LIMIT ${n}) ORDER BY id;")
+    echo ""
+    echo -e "  ${magenta}◆${reset} ${bold}广场: $(_swarm_name "$swarm")${reset}"
+    echo -e "  ${dim}$(printf '─%.0s' {1..50})${reset}"
+    if [[ -z "$rows" ]]; then
+        echo -e "  ${dim}(还没有消息，用 ttmux swarm say ${swarm} \"...\")${reset}"
+    else
+        _plaza_render_rows <<< "$rows"
+    fi
+    echo ""
+}
+
+# ttmux swarm watch <群> — 实时跟随(轮询 posts 表)
+_plaza_watch() {
+    local swarm="$1"
+    if ! _swarm_exists "$swarm"; then msg_err "蜂群不存在: ${swarm}"; return 1; fi
+    local db; db=$(_swarm_db_of "$swarm") || return 1
+    _plaza_feed "$swarm" -n 10
+    echo -e "  ${dim}── 跟随中（Ctrl-C 退出）──${reset}"
+    local last; last=$(sqlite3 "$db" "SELECT IFNULL(MAX(id),0) FROM posts;")
+    while true; do
+        local rows; rows=$(sqlite3 -separator $'\x1f' "$db" \
+            "SELECT id,ts,author,kind,IFNULL(re,''),text FROM posts WHERE id>${last} ORDER BY id;")
+        if [[ -n "$rows" ]]; then
+            _plaza_render_rows <<< "$rows"
+            last=$(sqlite3 "$db" "SELECT IFNULL(MAX(id),0) FROM posts;")
+        fi
+        sleep 2
+    done
+}
+# ══════════════════════════════════════════
+# ── board: 蜂群协作看板（任务卡片）──
+# ══════════════════════════════════════════
+#
+# 全群共享的任务卡片，按列流转；存每群 swarms/<id>/swarm.db 的 cards 表。详见 README。
+# 卡片 = 要做的事；成员 = 干活的会话(多对一)。只 master 派活(add/assign)，成员只推进自己的卡。
+# 列: backlog(待办) assigned(已派) doing(进行) review(待审) done(完成) blocked(受阻)
+
+_BOARD_COLS="backlog assigned doing review done blocked"
+_board_col_label() {
+    case "$1" in
+        backlog) echo "待办" ;; assigned) echo "已派" ;; doing) echo "进行" ;;
+        review)  echo "待审" ;; done)     echo "完成" ;; blocked)  echo "受阻" ;;
+        *) echo "$1" ;;
+    esac
+}
+_board_col_valid() { case " ${_BOARD_COLS} " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
+_board_card_exists() { [[ "$(sqlite3 "$1" "SELECT 1 FROM cards WHERE id='$(_sqe "$2")';")" == "1" ]]; }
+# 下一个卡 id: t<N>，N 由现有卡 id 的最大数字 +1
+_board_next_id() { sqlite3 "$1" "SELECT 't'||(COALESCE(MAX(CAST(SUBSTR(id,2) AS INTEGER)),0)+1) FROM cards;"; }
+_board_card_col() { sqlite3 "$1" "SELECT IFNULL(col,'') FROM cards WHERE id='$(_sqe "$2")';"; }
+
+# ttmux swarm task add <群> "<标题>" [--desc ..][--assignee 成员][--deps t1,t2][--col 列]
+# 标题打到 stdout(供 t1=$(...) 捕获)，装饰信息打到 stderr。
+_board_add() {
+    local swarm="$1"; shift || true
+    if ! _swarm_exists "$swarm"; then msg_err "蜂群不存在: ${swarm}"; return 1; fi
+    local desc="" assignee="" deps="" col="" parts=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --desc)     desc="$2"; shift 2 ;;
+            --assignee) assignee="$2"; shift 2 ;;
+            --deps)     deps="$2"; shift 2 ;;
+            --col)      col="$2"; shift 2 ;;
+            *) parts+=("$1"); shift ;;
+        esac
+    done
+    local title="${parts[*]}"
+    [[ -n "$title" ]] || { msg_err "卡片标题不能为空"; return 1; }
+    # 列默认：派了人 -> assigned，否则 backlog
+    [[ -z "$col" ]] && { [[ -n "$assignee" ]] && col="assigned" || col="backlog"; }
+    _board_col_valid "$col" || { msg_err "列只能是: ${_BOARD_COLS}"; return 1; }
+    local db id; db=$(_swarm_db_of "$swarm") || return 1
+    id=$(_board_next_id "$db")
+    sqlite3 "$db" "INSERT INTO cards(id,title,descr,assignee,col,deps,created,updated)
+        VALUES('$(_sqe "$id")','$(_sqe "$title")','$(_sqe "$desc")','$(_sqe "$assignee")','$(_sqe "$col")','$(_sqe "$deps")',
+               datetime('now','localtime'),datetime('now','localtime'));"
+    echo "$id"
+    msg_ok "新卡 ${bold}${id}${reset}  ${title}  ${dim}[${col}]${reset}$([[ -n "$assignee" ]] && echo " ${cyan}→ ${assignee}${reset}")" >&2
+}
+
+# ttmux swarm task assign <群> <卡id> <成员>
+_board_assign() {
+    local swarm="$1" cid="$2" who="$3"
+    if ! _swarm_exists "$swarm"; then msg_err "蜂群不存在: ${swarm}"; return 1; fi
+    [[ -n "$cid" && -n "$who" ]] || { msg_err "用法: ttmux swarm task assign <群> <卡id> <成员>"; return 1; }
+    local db; db=$(_swarm_db_of "$swarm") || return 1
+    _board_card_exists "$db" "$cid" || { msg_err "卡片不存在: ${cid}"; return 1; }
+    sqlite3 "$db" "UPDATE cards SET assignee='$(_sqe "$who")',
+        col=CASE WHEN col='backlog' THEN 'assigned' ELSE col END,
+        updated=datetime('now','localtime') WHERE id='$(_sqe "$cid")';"
+    msg_ok "${bold}${cid}${reset} ${cyan}→ ${who}${reset}  ${dim}[已派]${reset}"
+}
+
+# ttmux swarm task move <群> <卡id> <列>
+_board_move() {
+    local swarm="$1" cid="$2" col="$3"
+    if ! _swarm_exists "$swarm"; then msg_err "蜂群不存在: ${swarm}"; return 1; fi
+    [[ -n "$cid" && -n "$col" ]] || { msg_err "用法: ttmux swarm task move <群> <卡id> <列>"; return 1; }
+    _board_col_valid "$col" || { msg_err "列只能是: ${_BOARD_COLS}"; return 1; }
+    local db; db=$(_swarm_db_of "$swarm") || return 1
+    _board_card_exists "$db" "$cid" || { msg_err "卡片不存在: ${cid}"; return 1; }
+    local old; old=$(_board_card_col "$db" "$cid")
+    sqlite3 "$db" "UPDATE cards SET col='$(_sqe "$col")', updated=datetime('now','localtime') WHERE id='$(_sqe "$cid")';"
+    msg_ok "${bold}${cid}${reset}  ${dim}[${old} → ${col}]${reset}"
+}
+
+_board_done() { _board_move "$1" "$2" done; }
+
+# ttmux swarm task rm <群> <卡id>
+_board_rm() {
+    local swarm="$1" cid="$2"
+    if ! _swarm_exists "$swarm"; then msg_err "蜂群不存在: ${swarm}"; return 1; fi
+    [[ -n "$cid" ]] || { msg_err "用法: ttmux swarm task rm <群> <卡id>"; return 1; }
+    local db; db=$(_swarm_db_of "$swarm") || return 1
+    _board_card_exists "$db" "$cid" || { msg_err "卡片不存在: ${cid}"; return 1; }
+    sqlite3 "$db" "DELETE FROM cards WHERE id='$(_sqe "$cid")';"
+    msg_ok "卡片 ${bold}${cid}${reset} 已删除"
+}
+
+# ttmux swarm task show <群> <卡id>
+_board_show() {
+    local swarm="$1" cid="$2"
+    if ! _swarm_exists "$swarm"; then msg_err "蜂群不存在: ${swarm}"; return 1; fi
+    [[ -n "$cid" ]] || { msg_err "用法: ttmux swarm task show <群> <卡id>"; return 1; }
+    local db; db=$(_swarm_db_of "$swarm") || return 1
+    _board_card_exists "$db" "$cid" || { msg_err "卡片不存在: ${cid}"; return 1; }
+    local row; row=$(sqlite3 -separator $'\x1f' "$db" \
+        "SELECT id,title,IFNULL(descr,''),IFNULL(assignee,''),col,IFNULL(deps,''),created,updated FROM cards WHERE id='$(_sqe "$cid")';")
+    local id title descr who col deps created updated
+    IFS=$'\x1f' read -r id title descr who col deps created updated <<< "$row"
+    echo ""
+    echo -e "  ${yellow}${id}${reset}  ${bold}${title}${reset}  ${dim}[${col}]${reset}"
+    [[ -n "$who" ]]     && echo -e "    ${dim}负责:${reset} ${cyan}${who}${reset}"
+    [[ -n "$deps" ]]    && echo -e "    ${dim}依赖卡:${reset} ${deps}"
+    [[ -n "$descr" ]]   && echo -e "    ${dim}描述:${reset} ${descr}"
+    echo -e "    ${dim}创建 ${created}  更新 ${updated}${reset}"
+    echo ""
+}
+
+# ttmux swarm task ls <群> [--col 列][--assignee 成员][--json]
+_board_ls() {
+    local swarm="$1"; shift || true
+    if ! _swarm_exists "$swarm"; then msg_err "蜂群不存在: ${swarm}"; return 1; fi
+    local col="" who="" json=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --col) col="$2"; shift 2 ;;
+            --assignee) who="$2"; shift 2 ;;
+            --json) json=1; shift ;;
+            *) shift ;;
+        esac
+    done
+    local db where; db=$(_swarm_db_of "$swarm") || return 1
+    where="1=1"
+    [[ -n "$col" ]] && where="$where AND col='$(_sqe "$col")'"
+    [[ -n "$who" ]] && where="$where AND assignee='$(_sqe "$who")'"
+    if [[ -n "$json" ]]; then
+        sqlite3 -json "$db" "SELECT id,title,descr,assignee,col,deps,created,updated FROM cards WHERE ${where} ORDER BY id;"
+        return 0
+    fi
+    local rows; rows=$(sqlite3 -separator $'\x1f' "$db" \
+        "SELECT id,col,IFNULL(assignee,''),title FROM cards WHERE ${where} ORDER BY id;")
+    if [[ -z "$rows" ]]; then echo -e "  ${dim}(无卡片)${reset}"; return 0; fi
+    local id c a title
+    while IFS=$'\x1f' read -r id c a title; do
+        [[ -n "$id" ]] || continue
+        echo -e "  ${yellow}${id}${reset}  ${dim}[${c}]${reset} ${title}$([[ -n "$a" ]] && echo " ${cyan}→ ${a}${reset}")"
+    done <<< "$rows"
+}
+
+# ttmux swarm board <群> [--json] — 按列渲染整个看板
+_board_render() {
+    local swarm="$1"; shift || true
+    if ! _swarm_exists "$swarm"; then msg_err "蜂群不存在: ${swarm}"; return 1; fi
+    if [[ "${1:-}" == "--json" ]]; then
+        local db; db=$(_swarm_db_of "$swarm") || return 1
+        sqlite3 -json "$db" "SELECT id,title,descr,assignee,col,deps,created,updated FROM cards ORDER BY id;"
+        return 0
+    fi
+    local db; db=$(_swarm_db_of "$swarm") || return 1
+    local goal; goal=$(_swarm_meta_get "$swarm" goal)
+    echo ""
+    echo -e "  ${icon_group} ${bold}看板: $(_swarm_name "$swarm")${reset}$([[ -n "$goal" ]] && echo "    ${dim}目标: ${goal}${reset}")"
+    echo -e "  ${dim}$(printf '─%.0s' {1..50})${reset}"
+    local c
+    for c in $_BOARD_COLS; do
+        local cnt; cnt=$(sqlite3 "$db" "SELECT count(*) FROM cards WHERE col='$c';")
+        echo -e "  ${bold}${c}${reset} ${dim}($(_board_col_label "$c") · ${cnt})${reset}"
+        local rows; rows=$(sqlite3 -separator $'\x1f' "$db" \
+            "SELECT id,title,IFNULL(assignee,''),IFNULL(deps,'') FROM cards WHERE col='$c' ORDER BY id;")
+        [[ -z "$rows" ]] && continue
+        local id title who deps
+        while IFS=$'\x1f' read -r id title who deps; do
+            [[ -n "$id" ]] || continue
+            local a=""; [[ -n "$who" ]] && a="  ${cyan}→ ${who}${reset}"
+            local d=""; [[ -n "$deps" ]] && d="  ${dim}deps: ${deps}${reset}"
+            echo -e "    ${yellow}${id}${reset}  ${title}${a}${d}"
+        done <<< "$rows"
+    done
+    # 统计
+    local tot; tot=$(sqlite3 "$db" "SELECT count(*) FROM cards;")
+    echo ""
+    echo -e "  ${dim}共 ${tot} 张卡${reset}"
+    echo ""
+}
+
+# swarm task <action> 二级分发
+_board_task() {
+    local action="${1:-}"; shift || true
+    case "$action" in
+        add)    _board_add "$@" ;;
+        ls)     _board_ls "$@" ;;
+        show)   _board_show "$@" ;;
+        assign) _board_assign "$@" ;;
+        move)   _board_move "$@" ;;
+        done)   _board_done "$@" ;;
+        rm)     _board_rm "$@" ;;
+        *) msg_err "未知: swarm task ${action}  ${dim}(add/ls/show/assign/move/done/rm)${reset}"; return 1 ;;
+    esac
+}
+# ══════════════════════════════════════════
 # ── 补全安装 ──
 # ══════════════════════════════════════════
 
@@ -1533,11 +2153,11 @@ _ttmux_completions() {
             COMPREPLY=($(compgen -W "spawn status send collect kill" -- "$cur"))
             return ;;
         swarm)
-            COMPREPLY=($(compgen -W "new add ls status activate collect adopt done archive rm" -- "$cur"))
+            COMPREPLY=($(compgen -W "new add ls status activate collect adopt done say feed watch board task sql archive rm" -- "$cur"))
             return ;;
-        adopt|activate|done|archive)
+        adopt|activate|done|archive|status|collect|say|feed|watch|sql|add|board)
             local swarms
-            swarms=$(ls -d ~/.local/share/ttmux/swarms/*/ 2>/dev/null | xargs -I{} basename {})
+            swarms=$(sqlite3 ~/.ttmux/meta.db "SELECT name FROM swarms;" 2>/dev/null)
             COMPREPLY=($(compgen -W "$swarms" -- "$cur"))
             return ;;
         sp|split)
@@ -1602,14 +2222,21 @@ show_help() {
     ${dim}兼容别名: agent spawn|status|send|collect|kill 仍可用${reset}
 
   ${bold}蜂群编排 ${magenta}(swarm — 有目标的任务组, 可被 cc 接管)${reset}
-    ${green}swarm new${reset}    ${dim}<名> [--goal "..."]${reset}        新建蜂群
+    ${green}swarm new${reset}    ${dim}<名> [--goal "..."] [--no-master]${reset}  新建蜂群(默认自带 cc 指挥, --no-master 跳过)
     ${green}swarm add${reset}    ${dim}<群> <成员> --type task|agent ...${reset}  加成员
                 ${dim}[--dir/--perm/--model] [--depends-on a,b] <命令或任务>${reset}
-    ${green}swarm ls${reset}                                列出蜂群 (目标/状态/指挥)
-    ${green}swarm status${reset} ${dim}<群>${reset}                    成员状态 + 依赖 + 挂起
+    ${green}swarm ls${reset}     ${dim}[--json]${reset}                    列出蜂群 (目标/状态/指挥)
+    ${green}swarm status${reset} ${dim}<群> [--json]${reset}             成员/依赖/挂起 + 看板摘要 + 广场最近
     ${green}swarm activate${reset} ${dim}<群> [成员] [--force]${reset}   解锁挂起成员 (--force 无视依赖)
     ${green}swarm done${reset}   ${dim}<群> [成员]${reset}             带成员=标该成员完成并解锁下游, 无成员=整群完成
     ${green}swarm collect${reset} ${dim}<群> [--json]${reset}          收集成员输出
+    ${magenta}广场${reset} ${green}swarm say${reset} ${dim}<群> [--as 成员][--kind 类型][--re id] <消息>${reset}  发言(自动署名)
+         ${green}swarm feed${reset} ${dim}<群> [-n N][--from][--kind][--since id][--json]${reset}  读消息流
+         ${green}swarm watch${reset} ${dim}<群>${reset}                  实时跟随广场
+    ${magenta}看板${reset} ${green}swarm board${reset} ${dim}<群> [--json]${reset}             看板全貌(按列)
+         ${green}swarm task add${reset} ${dim}<群> "标题" [--desc/--assignee/--deps/--col]${reset}  建卡
+         ${green}swarm task${reset} ${dim}<ls|show|assign|move|done|rm> <群> ...${reset}  列/详情/派活/流转/删
+    ${green}swarm sql${reset}    ${dim}<群> [--json] "SELECT ..."${reset}     只读查每群 swarm.db (web/调试)
     ${green}swarm adopt${reset}  ${dim}<群> [--by <cc会话>]${reset}     cc 接管 (拉起指挥会话)
     ${green}swarm archive${reset}|${green}rm${reset} ${dim}<群>${reset}             归档 / 删除
 
@@ -2247,14 +2874,14 @@ case "$cmd" in
                 _swarm_add "$@"
                 ;;
             ls|list)
-                _swarm_ls
+                _swarm_ls "$@"
                 ;;
             status)
                 if [[ $# -lt 1 ]]; then
-                    msg_err "用法: ttmux swarm status <群>"
+                    msg_err "用法: ttmux swarm status <群> [--json]"
                     exit 1
                 fi
-                _swarm_status "$1"
+                _swarm_status "$@"
                 ;;
             collect)
                 if [[ $# -lt 1 ]]; then
@@ -2284,6 +2911,30 @@ case "$cmd" in
                 [[ $# -ge 1 ]] || { msg_err "用法: ttmux swarm done <群> [成员]"; exit 1; }
                 _swarm_done "$1" "${2:-}"
                 ;;
+            sql)
+                [[ $# -ge 1 ]] || { msg_err '用法: ttmux swarm sql <群> [--json] "SELECT ..."'; exit 1; }
+                _swarm_sql "$@"
+                ;;
+            say)
+                [[ $# -ge 2 ]] || { msg_err '用法: ttmux swarm say <群> [--as 成员] [--kind 类型] <消息>'; exit 1; }
+                _plaza_say "$@"
+                ;;
+            feed)
+                [[ $# -ge 1 ]] || { msg_err "用法: ttmux swarm feed <群> [-n N] [--from 成员] [--kind 类型] [--since id] [--json]"; exit 1; }
+                _plaza_feed "$@"
+                ;;
+            watch)
+                [[ $# -ge 1 ]] || { msg_err "用法: ttmux swarm watch <群>"; exit 1; }
+                _plaza_watch "$@"
+                ;;
+            board)
+                [[ $# -ge 1 ]] || { msg_err "用法: ttmux swarm board <群> [--json]"; exit 1; }
+                _board_render "$@"
+                ;;
+            task)
+                [[ $# -ge 1 ]] || { msg_err "用法: ttmux swarm task <add|ls|show|assign|move|done|rm> <群> ..."; exit 1; }
+                _board_task "$@"
+                ;;
             archive)
                 [[ $# -ge 1 ]] || { msg_err "用法: ttmux swarm archive <群>"; exit 1; }
                 _swarm_archive "$1"
@@ -2294,7 +2945,7 @@ case "$cmd" in
                 ;;
             *)
                 msg_err "未知子命令: swarm ${subcmd}"
-                echo -e "   可用: new, add, ls, status, activate, collect, adopt, done, archive, rm"
+                echo -e "   可用: new, add, ls, status, activate, collect, adopt, done, say, feed, watch, board, task, sql, archive, rm"
                 exit 1
                 ;;
         esac

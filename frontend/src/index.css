@@ -1,0 +1,73 @@
+/* 全局基调 · 精致克制
+   目标：细边框、舒展留白、克制的交互反馈、精修排版（近 Linear/Vercel 的高级感）。
+   只调"基调"，不逐页堆样式；页面组件继承这里的观感即可。 */
+
+:root { color-scheme: dark; }
+
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: #0d1117;
+  /* 精修字体栈：优先界面无衬线 + 中文黑体；数字等宽对齐更整齐 */
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* ── 细滚动条：更窄、更暗，hover 才稍亮（覆盖 index.html 的基础版） ── */
+* { scrollbar-width: thin; scrollbar-color: #2a313a transparent; }
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: #2a313a; border-radius: 8px;
+  border: 2px solid transparent; background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: #3d444d; background-clip: content-box; }
+*::-webkit-scrollbar-corner { background: transparent; }
+
+/* 选区色：主色低透明，克制 */
+::selection { background: rgba(88, 166, 255, 0.26); }
+
+/* ── 统一过渡：交互更顺滑（120~150ms，克制不张扬） ── */
+.ant-btn, .ant-tag, .ant-card, .ant-list-item, .ant-input, .ant-input-affix-wrapper,
+.ant-input-number, .ant-select-selector, .ant-segmented-item, .ant-menu-item, a {
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease,
+    box-shadow .15s ease, transform .15s ease !important;
+}
+
+/* ── 卡片：细边框 + 克制悬浮（边框微亮 + 极轻阴影，不位移） ── */
+.ant-card { border-color: #21262d; }
+.ant-card-bordered { border-color: #21262d; }
+.ant-card-hoverable:hover {
+  border-color: #30363d;
+  box-shadow: 0 8px 24px rgba(1, 4, 9, .5);
+  transform: translateY(-1px);
+}
+.ant-card-head { border-block-end-color: #21262d; min-height: 46px; }
+.ant-card-head-title { font-weight: 600; letter-spacing: .2px; }
+
+/* ── 列表：行距舒展、分隔线更淡、hover 轻微提亮并圆角 ── */
+.ant-list-split .ant-list-item { border-block-end-color: #1c2128; }
+.ant-list-item { border-radius: 8px; padding-inline: 8px; }
+.ant-list-item:hover { background: rgba(255, 255, 255, .025); }
+
+/* ── 输入框：聚焦细发光，克制 ── */
+.ant-input:focus, .ant-input-focused,
+.ant-input-affix-wrapper:focus, .ant-input-affix-wrapper-focused {
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, .14);
+}
+
+/* ── 标签：圆角更柔、字距收紧 ── */
+.ant-tag { border-radius: 6px; letter-spacing: .2px; }
+
+/* ── 链接：默认偏中性，hover 才上主色 ── */
+.ant-typography a, a.ant-typography { color: #58a6ff; }
+
+/* 等宽数字（统计/指标对齐不跳动） */
+.ant-statistic-content-value, .tnum { font-variant-numeric: tabular-nums; }
+
+/* 弹层：与页面拉开一点层次（配合 colorBgElevated） */
+.ant-modal-content, .ant-dropdown-menu, .ant-popover-inner, .ant-select-dropdown {
+  box-shadow: 0 16px 48px rgba(1, 4, 9, .55) !important;
+}

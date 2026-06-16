@@ -77,8 +77,35 @@ cc-swarm 同时是 **包工头** 和 **监护人**：
 | 催测试 | [test-push.md](docs/test-push.md) | 完成开发后推动写差异化测试 |
 | 代码审查 | [review.md](docs/review.md) | 架构级 review，发 challenge |
 | 并发调度 | [concurrency.md](docs/concurrency.md) | 控制活跃数，避免 API 429 |
+| 协作底座 | （本文「广场+看板」一节） | 成员经广场沟通、看板分工；master 据此调度 |
 | 集成验收 | [integrate.md](docs/integrate.md) | 汇总成果，对照需求验收 |
 | 蜂群记忆 | [memory.md](docs/memory.md) | 持久化需求、任务图、每个会话的状态 |
+
+## 广场 + 看板（蜂群协作底座）
+
+每个蜂群有一份**广场**（异步消息流）和一份**看板**（任务卡片），全群共享、落在 `swarm.db`。
+**多个成员通过广场+看板协作；但分工是单中心的——只有你(master)派活。**
+
+- **看板 = 分工**：拆完把每个子任务建成卡（`swarm task add`），开会话后派给成员（`swarm task assign`）。
+  成员只推进自己名下的卡（`move` 到 doing/review），**不替别人派活**。
+- **广场 = 沟通**：成员播报完成/提问/报阻塞（`swarm say --kind done/ask/block`，自动署名）；
+  你广播/裁决（`--kind broadcast/decide`）。巡检时**优先读广场+看板**，比抓终端鲁棒。
+
+```bash
+# 你(master)
+ttmux swarm task add <群> "<子任务>" [--deps t1]      # 拆活上板
+ttmux swarm task assign <群> <卡> <成员>              # 派活
+ttmux swarm feed <群> --kind block   # 巡检：谁卡住
+ttmux swarm board <群>               # 巡检：任务全貌
+ttmux swarm say <群> --kind broadcast "<指挥>"
+# 成员（在自己会话里，自动署名）
+ttmux swarm task ls <群> --assignee <我>   # 我的卡
+ttmux swarm task move <群> <卡> doing/review
+ttmux swarm say <群> --kind done/block/ask "<...>"
+```
+
+> 三套机制（广场 / 看板 / 成员依赖门控）**正交**，串联由你显式做：审过某成员就
+> `swarm task done <群> <卡>` 推看板、`swarm done <群> <成员>` 解锁下游。详见 patrol.md。
 
 ## 参数分发
 
@@ -87,8 +114,12 @@ cc-swarm 的参数决定它从生命周期的哪一步进入：
 - **`<目标描述>`**（自由文字，最常见）→ **完整流程**：接需求 → 建需求 → 拆任务 → 开子会话 → 巡检 → 集成。
   例：`/cc-swarm 给项目加上 OAuth 登录和 RBAC 权限`
 - **无参数** → 进入**纯监护模式**：不开新会话，直接持续巡检已有的 `cc-*` 会话。
-- **`--swarm <名>`** → 进入**蜂群作用域监护**：只监护该蜂群（`ttmux swarm`）的成员，不扫全局 `cc-*`。
-  这是 `ttmux swarm adopt <名>` 拉起指挥会话时自动注入的入口。详见 docs/patrol.md「蜂群作用域」。
+- **`--swarm <名> [目标]`** → 进入**蜂群作用域**：只针对该蜂群（`ttmux swarm <名>`）操作，不扫全局 `cc-*`。
+  - **不带目标** → 纯监护：持续巡检该蜂群已有成员（审批/催测试/review/调度/解锁/集成）。
+  - **带目标**（`ttmux swarm new <名> --goal "…"` 自带 master 时即注入此形态）→ 对该目标走**完整生命周期**，
+    但所有产物都落在这个蜂群下：拆任务上看板(`ttmux swarm task add <名> …`)→开成员(`ttmux swarm add <名> <成员> --type agent …`，
+    有依赖用 `--depends-on`)→广播开工(`ttmux swarm say <名> --kind broadcast`)→巡检(`feed`/`board`)→标完成解锁(`swarm done`)→集成验收。
+  这是 `ttmux swarm new`(自带 master) 与 `ttmux swarm adopt <名>` 拉起指挥会话时自动注入的入口。详见 docs/patrol.md「蜂群作用域」。
 - **`plan <目标>`** → 只做到第 ③ 步：建需求 + 拆任务 + 输出计划，**不开会话**，等用户确认。
 - **`once`** → 只跑一轮巡检。
 - **`status`** → 只看状态不操作，输出表格（需求进度 + 各会话状态）。

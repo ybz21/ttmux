@@ -115,6 +115,27 @@ ttmux agent kill fix            # 清理
 这些会话用 `claude -p --dangerously-skip-permissions`，**不弹审批、不需要巡检**，
 跑完自动退出。cc-swarm 只需在集成阶段 `collect` 它们的产出。
 
+## 关联看板卡 + 告诉成员怎么协作
+
+开完成员会话后，把它对应的看板卡派给它，并在给成员的**任务 prompt 里**写明协作纪律：
+
+```bash
+ttmux swarm task assign <群> <卡id> <成员>      # 把卡派给刚开的成员（自动进 assigned）
+```
+
+给成员的任务文件末尾加一段（让成员主动用广场/看板，而不是等你来抓屏）：
+
+```markdown
+## 协作约定（本蜂群）
+- 认领：开工前 `ttmux swarm task move <群> <你的卡> doing`。
+- 播报：有产出/契约就 `ttmux swarm say <群> --kind done "<一句话+契约>"`（会自动署名你）。
+- 卡住：缺东西就 `ttmux swarm say <群> --kind block "<缺什么>"`，别干等。
+- 提问：`ttmux swarm say <群> --kind ask "<问题>"`，我会在广场回你。
+- 交付：做完 `ttmux swarm task move <群> <你的卡> review`，等我审。
+```
+
+> 成员**不自己派活**、不替别人决策；只推进自己名下的卡 + 在广场喊话。派活权只在 master。
+
 ## 派活后
 
 会话开起来后，cc-swarm 的角色从「包工头」切到「监护人」，进入 patrol.md 的持续巡检循环。

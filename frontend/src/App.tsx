@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Layout, Menu, Button, Card, List, Tag, Form, Input, Select, Segmented,
-  Statistic, Row, Col, Space, Popconfirm, Empty, Modal, Grid, App as AntApp, Typography, Spin, Tooltip, Dropdown, Checkbox,
+  Statistic, Row, Col, Space, Popconfirm, Empty, Modal, Grid, App as AntApp, Typography, Spin, Tooltip, Dropdown, Checkbox, Progress,
 } from 'antd'
 import { QRCodeSVG } from 'qrcode.react'
 import { api, setUnauthorizedHandler } from './api'
@@ -15,6 +15,7 @@ import ClaudeChat from './ClaudeChat'
 import CodexChat from './CodexChat'
 import FileBrowser from './FileBrowser'
 import BrowserView from './BrowserView'
+import Swarm from './Swarm'
 
 interface ClaudeInfo { running: boolean; file?: string; dir?: string }
 
@@ -25,9 +26,9 @@ const { Text } = Typography
 const NAV = [
   { key: 'overview', label: '概览' },
   { key: 'sessions', label: '会话' },
-  { key: 'tasks', label: '任务' },
-  { key: 'env', label: '系统配置' },
+  { key: 'swarm', label: '蜂群' },
   { key: 'browser', label: '浏览器' },
+  { key: 'env', label: '系统配置' },
 ]
 
 // 线性图标（无 emoji，currentColor 描边）
@@ -38,7 +39,7 @@ const svg = (paths: any) => (
 const ICONS: Record<string, any> = {
   overview: svg(<><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>),
   sessions: svg(<><polyline points="5 8 9 12 5 16" /><line x1="12" y1="16" x2="18" y2="16" /></>),
-  tasks: svg(<><line x1="9" y1="6" x2="20" y2="6" /><line x1="9" y1="12" x2="20" y2="12" /><line x1="9" y1="18" x2="20" y2="18" /><circle cx="4.5" cy="6" r="1.1" /><circle cx="4.5" cy="12" r="1.1" /><circle cx="4.5" cy="18" r="1.1" /></>),
+  swarm: svg(<><circle cx="12" cy="5" r="2.4" /><circle cx="5" cy="17" r="2.4" /><circle cx="19" cy="17" r="2.4" /><line x1="12" y1="7.4" x2="6.5" y2="14.8" /><line x1="12" y1="7.4" x2="17.5" y2="14.8" /></>),
   env: svg(<><line x1="4" y1="7" x2="20" y2="7" /><circle cx="9" cy="7" r="2.3" /><line x1="4" y1="17" x2="20" y2="17" /><circle cx="15" cy="17" r="2.3" /></>),
   browser: svg(<><rect x="3" y="4" width="18" height="16" rx="2" /><line x1="3" y1="9" x2="21" y2="9" /><circle cx="6" cy="6.5" r="0.6" /><circle cx="8.4" cy="6.5" r="0.6" /></>),
 }
@@ -99,12 +100,24 @@ export default function App() {
   const screens = useBreakpoint()
   const hasSider = !!screens.md
   const isMobile = !screens.md
+  // 全屏（平板更易用：隐藏浏览器栏，等价 F11）。监听变化以同步按钮图标
+  const [isFs, setIsFs] = useState(false)
+  useEffect(() => {
+    const on = () => setIsFs(!!(document.fullscreenElement || (document as any).webkitFullscreenElement))
+    document.addEventListener('fullscreenchange', on)
+    document.addEventListener('webkitfullscreenchange', on)
+    return () => {
+      document.removeEventListener('fullscreenchange', on)
+      document.removeEventListener('webkitfullscreenchange', on)
+    }
+  }, [])
 
   // 多终端状态
   const [terms, setTerms] = useState<string[]>([])
   const [active, setActive] = useState<string | null>(null)
   const [overlay, setOverlay] = useState(false) // 手机/平板全屏终端
   const [dockOpen, setDockOpen] = useState(true) // 桌面：右侧终端停靠栏是否展开
+  const [dockMax, setDockMax] = useState(false)  // 桌面：终端栏向左扩展（遮住会话列表）
   const [fontSize, setFontSize] = useState(13)
   const [statusMap, setStatusMap] = useState<Record<string, TermStatus>>({})
   const termRefs = useRef<Record<string, TermHandle | null>>({})
@@ -140,7 +153,7 @@ export default function App() {
     return () => { stop = true; clearInterval(t) }
   }, [authed, terms])
 
-  if (authed === null) return <div style={{ height: '100vh', display: 'grid', placeItems: 'center' }}><Spin size="large" /></div>
+  if (authed === null) return <div style={{ height: '100dvh', display: 'grid', placeItems: 'center' }}><Spin size="large" /></div>
   if (!authed) return <Login onOk={() => { setAuthed(true); go('overview') }} />
 
   // 独立单终端页（新标签全屏打开）：URL 带 ?term=<会话名>
@@ -150,14 +163,14 @@ export default function App() {
   const openTerm = (name: string) => {
     setTerms((ts) => (ts.includes(name) ? ts : [...ts, name]))
     setActive(name)
-    if (hasSider) setDockOpen(true) // 桌面：拉出右侧停靠栏（压缩页面到左）
+    if (hasSider) { setDockOpen(true); setDockMax(false) } // 桌面：拉出右侧停靠栏（压缩页面到左）
     else setOverlay(true)           // 手机/平板：全屏
   }
   const closeTerm = (name: string) => {
     setTerms((ts) => {
       const next = ts.filter((t) => t !== name)
       setActive((a) => (a === name ? (next[next.length - 1] || null) : a))
-      if (next.length === 0) setOverlay(false)
+      if (next.length === 0) { setOverlay(false); setDockMax(false) }
       return next
     })
     delete termRefs.current[name]
@@ -166,6 +179,21 @@ export default function App() {
   const docked = hasSider && terms.length > 0 && dockOpen // 桌面停靠栏已展开
   const setStatus = (name: string, s: TermStatus) => setStatusMap((m) => ({ ...m, [name]: s }))
   const sendKey = (seq: string) => active && termRefs.current[active]?.send(seq)
+
+  // 全屏切换（标准 API + webkit 兜底）。不支持的浏览器（如 iOS Safari）隐藏按钮，改走「添加到主屏幕」
+  const docEl: any = document.documentElement
+  const fsSupported = !!(docEl.requestFullscreen || docEl.webkitRequestFullscreen)
+  const toggleFs = () => {
+    const doc: any = document
+    if (doc.fullscreenElement || doc.webkitFullscreenElement) {
+      (doc.exitFullscreen || doc.webkitExitFullscreen)?.call(doc)
+    } else {
+      (docEl.requestFullscreen || docEl.webkitRequestFullscreen)?.call(docEl)
+    }
+  }
+  const fsIcon = isFs
+    ? svg(<><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="20" y2="4" /><line x1="4" y1="20" x2="10" y2="14" /></>)
+    : svg(<><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></>)
 
   const termPane = (
     <TerminalPane
@@ -179,8 +207,8 @@ export default function App() {
   )
 
   const pages: any = {
-    overview: <Overview goTask={() => go('tasks')} openTerm={openTerm} />,
-    tasks: <Tasks openTerm={openTerm} kanna={kanna} />,
+    overview: <Overview go={go} openTerm={openTerm} kanna={kanna} />,
+    swarm: <Swarm openTerm={openTerm} />,
     sessions: <Sessions openTerm={openTerm} />,
     env: <EnvPage />,
     browser: <BrowserView />,
@@ -195,19 +223,15 @@ export default function App() {
   )
 
   return (
-    <Layout style={{ minHeight: '100vh', background: '#0d1117' }}>
-      {hasSider && (
+    <Layout style={{ minHeight: '100dvh', background: '#0d1117' }}>
+      {hasSider && !dockMax && (
         <Sider collapsible trigger={null} collapsed={collapsed} collapsedWidth={64}
           breakpoint="lg" onBreakpoint={(b) => setCollapsed(b)} width={208} theme="dark"
-          style={{ position: 'sticky', top: 0, height: '100vh', background: '#0d1117', borderRight: '1px solid #21262d' }}>
+          style={{ position: 'sticky', top: 0, height: '100dvh', background: '#0d1117', borderRight: '1px solid #21262d' }}>
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: collapsed ? '18px 0 16px' : '18px 18px 16px', justifyContent: collapsed ? 'center' : 'flex-start' }}>
-              <span style={{
-                width: 34, height: 34, borderRadius: 10, display: 'grid', placeItems: 'center', flex: '0 0 auto',
-                background: 'linear-gradient(145deg,#f2f4f7 0%,#b9c0c9 38%,#838b95 62%,#cdd3da 100%)',
-                boxShadow: 'inset 0 1px 1px rgba(255,255,255,.7), inset 0 -2px 3px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.5)',
-                color: '#2b3138', fontWeight: 900, fontSize: 17,
-              }}>▸</span>
+              <img src="/logo-mark.svg" width={34} height={34} alt="ttmux"
+                style={{ flex: '0 0 auto', borderRadius: 10, boxShadow: '0 1px 3px rgba(0,0,0,.5)' }} />
               {!collapsed && (
                 <div style={{ lineHeight: 1.15 }}>
                   <div style={{
@@ -220,17 +244,25 @@ export default function App() {
               )}
             </div>
             <div style={{ flex: 1, overflowY: 'auto' }}>{menu}</div>
-            {/* 底部：折叠 + 退出（无顶部栏） */}
-            <div style={{ borderTop: '1px solid #21262d', padding: 8, display: 'flex', flexDirection: collapsed ? 'column' : 'row', gap: 6, alignItems: 'center' }}>
-              <Button type="text" onClick={() => setCollapsed((c) => !c)} style={{ color: '#8b949e' }}
-                title={collapsed ? '展开' : '折叠'}>
+            {/* 底部：全屏（上）+ 折叠 + 退出（下），始终竖向堆叠 */}
+            <div style={{ borderTop: '1px solid #21262d', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {fsSupported && (
+                <Button type="text" block onClick={toggleFs} style={{ color: '#8b949e', textAlign: collapsed ? 'center' : 'left' }}
+                  title={isFs ? '退出全屏' : '全屏'}>
+                  {collapsed ? fsIcon : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>{fsIcon}{isFs ? '退出全屏' : '全屏'}</span>}
+                </Button>
+              )}
+              <Button type="text" block onClick={() => setCollapsed((c) => !c)} style={{ color: '#8b949e' }}
+                title={collapsed ? '展开导航' : '折叠导航'}>
                 {svg(collapsed
                   ? <><polyline points="9 6 15 12 9 18" /></>
                   : <><polyline points="15 6 9 12 15 18" /></>)}
               </Button>
-              <Button type="text" onClick={logout} style={{ color: '#8b949e', flex: collapsed ? undefined : 1, textAlign: 'left' }}>
-                {collapsed ? svg(<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></>) : '退出登录'}
-              </Button>
+              <Popconfirm title="确定退出登录？" okText="退出" cancelText="取消" onConfirm={logout} placement="topRight">
+                <Button type="text" block style={{ color: '#8b949e', textAlign: collapsed ? 'center' : 'left' }} title="退出登录">
+                  {collapsed ? svg(<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></>) : '退出登录'}
+                </Button>
+              </Popconfirm>
             </div>
           </div>
         </Sider>
@@ -238,32 +270,45 @@ export default function App() {
 
       {/* 主区：左侧页面 + 右侧可停靠终端栏（桌面）。开终端时页面向左压缩。*/}
       <Layout style={{ background: '#0d1117' }}>
-        <div style={{ display: 'flex', height: '100vh', minHeight: 0 }}>
+        <div style={{ display: 'flex', height: '100dvh', minHeight: 0 }}>
           <Content style={{
-            // 终端弹出时，左侧页面收到尽量窄，把空间让给终端
-            flex: docked && tab !== 'browser' ? '0 0 300px' : 1,
-            width: docked && tab !== 'browser' ? 300 : 'auto', minWidth: 0,
-            height: '100vh', overflow: tab === 'browser' ? 'hidden' : 'auto',
+            // 终端弹出时左侧页面压窄到 300；继续向左扩展(dockMax)则收到 0、被终端遮住
+            flex: docked && tab !== 'browser' ? (dockMax ? '0 0 0px' : '0 0 300px') : 1,
+            width: docked && tab !== 'browser' ? (dockMax ? 0 : 300) : 'auto', minWidth: 0,
+            height: '100dvh', overflow: tab === 'browser' ? 'hidden' : 'auto',
             padding: tab === 'browser' ? 0 : 14,
             paddingBottom: isMobile ? 76 : (tab === 'browser' ? 0 : 14),
-            transition: 'flex-basis .2s',
+            transition: 'flex-basis .2s, width .2s',
           }}>
             {pages[tab] || pages.sessions}
           </Content>
 
-          {/* 角标把手：开终端后常驻右缘，点一下开合停靠栏（桌面）*/}
+          {/* 角标把手：上半 ◂ 向左扩展（关→开→遮住会话列表），下半 ▸ 向右收起 */}
           {hasSider && terms.length > 0 && (
-            <div onClick={() => setDockOpen((o) => !o)} title={dockOpen ? '收起终端' : '展开终端'}
-              style={{
-                flex: '0 0 22px', cursor: 'pointer', background: '#161b22', borderLeft: '1px solid #30363d',
-                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8,
-                color: anyClaude ? '#d2a8ff' : '#8b949e', userSelect: 'none',
-              }}>
-              <span style={{ fontSize: 13 }}>{dockOpen ? '▸' : '◂'}</span>
-              <span style={{ writingMode: 'vertical-rl', letterSpacing: 2, fontSize: 12 }}>
-                {anyClaude ? '🤖 终端' : '终端'}
-              </span>
-              <span style={{ fontSize: 11, background: '#1f6feb', color: '#fff', borderRadius: 9, padding: '0 6px' }}>{terms.length}</span>
+            <div style={{
+              flex: '0 0 22px', background: '#161b22', borderLeft: '1px solid #30363d',
+              display: 'flex', flexDirection: 'column', color: anyClaude ? '#d2a8ff' : '#8b949e', userSelect: 'none',
+            }}>
+              {/* 上半：向左扩展 */}
+              <div onClick={() => (dockOpen ? setDockMax(true) : setDockOpen(true))}
+                title={!dockOpen ? '展开终端' : '向左扩展（遮住会话列表）'}
+                style={{
+                  flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  borderBottom: '1px solid #30363d', cursor: dockMax ? 'default' : 'pointer', opacity: dockMax ? 0.3 : 1,
+                }}>
+                <span style={{ fontSize: 13 }}>◂</span>
+                <span style={{ writingMode: 'vertical-rl', letterSpacing: 2, fontSize: 12 }}>{anyClaude ? '🤖 终端' : '终端'}</span>
+                <span style={{ fontSize: 11, background: '#1f6feb', color: '#fff', borderRadius: 9, padding: '0 6px' }}>{terms.length}</span>
+              </div>
+              {/* 下半：向右收起 */}
+              <div onClick={() => (dockMax ? setDockMax(false) : setDockOpen(false))}
+                title={dockMax ? '还原' : '向右收起'}
+                style={{
+                  flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: dockOpen ? 'pointer' : 'default', opacity: dockOpen ? 1 : 0.3,
+                }}>
+                <span style={{ fontSize: 13 }}>▸</span>
+              </div>
             </div>
           )}
 
@@ -288,10 +333,18 @@ export default function App() {
               {ICONS[n.key]}{n.label}
             </button>
           ))}
-          <button onClick={logout}
-            style={{ flex: 1, border: 0, background: 'none', color: '#8b949e', padding: '8px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, fontSize: 11 }}>
-            {svg(<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></>)}退出
-          </button>
+          {fsSupported && (
+            <button onClick={toggleFs}
+              style={{ flex: 1, border: 0, background: 'none', color: '#8b949e', padding: '8px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, fontSize: 11 }}>
+              {fsIcon}{isFs ? '退出' : '全屏'}
+            </button>
+          )}
+          <Popconfirm title="确定退出登录？" okText="退出" cancelText="取消" onConfirm={logout} placement="top">
+            <button
+              style={{ flex: 1, border: 0, background: 'none', color: '#8b949e', padding: '8px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, fontSize: 11 }}>
+              {svg(<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></>)}退出
+            </button>
+          </Popconfirm>
         </nav>
       )}
 
@@ -496,9 +549,13 @@ function Login({ onOk }: { onOk: () => void }) {
   useEffect(() => { api('GET', '/pubconfig').then((r) => setTotp(!!r?.data?.totp)).catch(() => {}) }, [])
 
   return (
-    <div style={{ height: '100vh', display: 'grid', placeItems: 'center', padding: 16, background: '#0d1117' }}>
+    <div style={{ height: '100dvh', display: 'grid', placeItems: 'center', padding: 16, background: '#0d1117' }}>
       <Card style={{ width: 'min(360px,92vw)' }}>
-        <div style={{ textAlign: 'center', fontSize: 22, fontWeight: 700, marginBottom: 16 }}>ttmux 控制台</div>
+        <div style={{ textAlign: 'center', marginBottom: 18 }}>
+          <img src="/logo-mark.svg" width={64} height={64} alt="ttmux" style={{ borderRadius: 14 }} />
+          <div style={{ fontSize: 22, fontWeight: 700, marginTop: 10 }}>ttmux 控制台</div>
+          <div style={{ color: '#6e7681', fontSize: 12, marginTop: 2 }}>多终端 · 一起干活</div>
+        </div>
         <Form
           initialValues={{ password: saved, remember: !!saved }}
           onFinish={async (v) => {
@@ -531,34 +588,118 @@ function Login({ onOk }: { onOk: () => void }) {
   )
 }
 
-// ── 概览 ──
-function Overview({ goTask, openTerm }: { goTask: () => void; openTerm: (n: string) => void }) {
+// ── 概览（仪表盘）──
+// 蜂群状态 → 颜色/中文
+function SwarmStatusTag({ status }: { status?: string }) {
+  const m: Record<string, [string, string]> = {
+    planning: ['blue', '规划中'], running: ['processing', '运行中'],
+    integrating: ['gold', '集成中'], done: ['success', '完成'], archived: ['default', '已归档'],
+  }
+  const [c, l] = m[status || ''] || ['default', status || '—']
+  return <Tag color={c} style={{ margin: 0 }}>{l}</Tag>
+}
+
+// 统计磁贴：左侧色块图标 + 大数字 + 标签，可点跳转
+function StatTile({ icon, label, value, accent, onClick }: {
+  icon: any; label: string; value: any; accent: string; onClick?: () => void
+}) {
+  return (
+    <Card size="small" hoverable={!!onClick} onClick={onClick}
+      style={{ cursor: onClick ? 'pointer' : 'default', background: '#161b22', borderColor: '#21262d' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ width: 40, height: 40, borderRadius: 10, flex: '0 0 auto', display: 'grid', placeItems: 'center', color: accent, background: accent + '22' }}>{icon}</div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 24, fontWeight: 700, lineHeight: 1.1, color: '#e6edf3' }}>{value}</div>
+          <div style={{ color: '#8b949e', fontSize: 12 }}>{label}</div>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+function Overview({ go, openTerm, kanna }: { go: (k: string) => void; openTerm: (n: string) => void; kanna?: string }) {
   const [info, setInfo] = useState<any>(null)
-  const [groups, setGroups] = useState<any[]>([])
-  const [spawn, setSpawn] = useState(false)
+  const [swarms, setSwarms] = useState<any[]>([])
+  const [sessions, setSessions] = useState<any[]>([])
   const load = () => {
     api('GET', '/info').then(setInfo).catch(() => {})
-    api('GET', '/tasks').then(setGroups).catch(() => {})
+    api('GET', '/swarms').then((r) => setSwarms(Array.isArray(r) ? r : [])).catch(() => {})
+    api('GET', '/sessions').then((r) => setSessions(Array.isArray(r) ? r : [])).catch(() => {})
   }
   useEffect(() => { load(); const t = setInterval(load, 3000); return () => clearInterval(t) }, [])
+
+  const aliveMembers = swarms.reduce((n, x) => n + (x.alive || 0), 0)
+  const pendingMembers = swarms.reduce((n, x) => n + (x.pending || 0), 0)
+  const chip = { color: '#8b949e', background: '#0d1117', border: '1px solid #21262d', fontSize: 12 }
+
   return (
-    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Row gutter={[12, 12]}>
-        {[['会话', info?.sessions], ['任务组', info?.groups], ['ttmux', info?.version], ['tmux', info?.tmux_version]].map(([t, v]) => (
-          <Col xs={12} sm={6} key={t as string}><Card size="small"><Statistic title={t as string} value={v ?? '—'} /></Card></Col>
-        ))}
+    <Space direction="vertical" size={14} style={{ width: '100%' }}>
+      {/* Hero */}
+      <div style={{ borderRadius: 14, padding: '22px 24px', background: 'linear-gradient(135deg,#161b22 0%,#0d1117 100%)', border: '1px solid #21262d' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <img src="/logo-mark.svg" width={48} height={48} alt="ttmux" style={{ flex: '0 0 auto', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,.5)' }} />
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontSize: 22, fontWeight: 800, color: '#e6edf3' }}>欢迎回来{kanna ? '，' + kanna : ''} 👋</div>
+            <div style={{ color: '#8b949e', fontSize: 13, marginTop: 4 }}>多终端 · 蜂群编排 · 一起干活</div>
+          </div>
+          <Space wrap>
+            <Button type="primary" onClick={() => go('sessions')}>进入会话</Button>
+            <Button onClick={() => go('swarm')}>查看蜂群</Button>
+          </Space>
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
+          <Tag bordered={false} style={chip}>ttmux {info?.version || '—'}</Tag>
+          <Tag bordered={false} style={chip}>tmux {info?.tmux_version || '—'}</Tag>
+          {info?.data_dir && <Tag bordered={false} style={chip}>📁 {info.data_dir}</Tag>}
+        </div>
+      </div>
+
+      {/* 统计磁贴 */}
+      <Row gutter={[14, 14]}>
+        <Col xs={12} sm={6}><StatTile icon={ICONS.sessions} label="会话" value={info?.sessions ?? sessions.length} accent="#58a6ff" onClick={() => go('sessions')} /></Col>
+        <Col xs={12} sm={6}><StatTile icon={ICONS.swarm} label="蜂群" value={swarms.length} accent="#d2a8ff" onClick={() => go('swarm')} /></Col>
+        <Col xs={12} sm={6}><StatTile icon={ICONS.swarm} label="活跃成员" value={aliveMembers} accent="#3fb950" onClick={() => go('swarm')} /></Col>
+        <Col xs={12} sm={6}><StatTile icon={ICONS.overview} label="待解锁" value={pendingMembers} accent="#d29922" onClick={() => go('swarm')} /></Col>
       </Row>
-      <Card title="任务组" extra={<Button type="primary" onClick={() => setSpawn(true)}>+ 创建任务</Button>}>
-        {groups.length === 0 ? <Empty description="暂无任务组" /> : (
-          <List dataSource={groups} renderItem={(g: any) => (
-            <List.Item actions={[<a key="o" onClick={goTask}>查看</a>]}>
-              <List.Item.Meta title={g.group} description={`${g.total} 个任务 · 存活 ${g.alive}`} />
-              <StatusTag status={g.alive > 0 ? 'running' : 'done'} />
-            </List.Item>
-          )} />
-        )}
-      </Card>
-      <SpawnModal open={spawn} onClose={() => setSpawn(false)} onDone={load} />
+
+      {/* 蜂群 + 会话 双栏 */}
+      <Row gutter={[14, 14]}>
+        <Col xs={24} lg={14}>
+          <Card title={<Space><span style={{ color: '#d2a8ff' }}>◆</span>蜂群</Space>} extra={<a onClick={() => go('swarm')}>全部 →</a>}>
+            {swarms.length === 0 ? <Empty description="暂无蜂群（在终端 ttmux swarm new 创建）" /> : (
+              <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                {swarms.slice(0, 5).map((s: any) => (
+                  <div key={s.id || s.name} onClick={() => go('swarm')}
+                    style={{ cursor: 'pointer', padding: '10px 12px', borderRadius: 10, background: '#0d1117', border: '1px solid #21262d' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontWeight: 600, color: '#e6edf3' }}>{s.name}</span>
+                      <SwarmStatusTag status={s.status} />
+                      {s.supervisor && <Text type="secondary" style={{ fontSize: 12 }}>◆{s.supervisor}</Text>}
+                      <span style={{ flex: 1 }} />
+                      <span style={{ color: '#8b949e', fontSize: 12, whiteSpace: 'nowrap' }}>{s.alive}/{s.total} 活{s.pending ? ` · +${s.pending} 待` : ''}</span>
+                    </div>
+                    <div style={{ color: '#8b949e', fontSize: 12, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.goal || '(无目标)'}</div>
+                    <Progress percent={s.total ? Math.round((s.alive / s.total) * 100) : 0} showInfo={false} size="small" strokeColor="#d2a8ff" trailColor="#21262d" style={{ marginBottom: 0, marginTop: 6 }} />
+                  </div>
+                ))}
+              </Space>
+            )}
+          </Card>
+        </Col>
+        <Col xs={24} lg={10}>
+          <Card title="会话" extra={<a onClick={() => go('sessions')}>全部 →</a>}>
+            {sessions.length === 0 ? <Empty description="无活跃会话" /> : (
+              <List size="small" dataSource={sessions.slice(0, 6)} renderItem={(s: any) => (
+                <List.Item actions={[<a key="t" onClick={() => openTerm(s.name)}>终端</a>]}>
+                  <List.Item.Meta
+                    title={<span style={{ color: '#e6edf3' }}>{s.name}</span>}
+                    description={`${s.windows} 窗口 · ${s.attached == 1 ? '已连接' : '空闲'}`} />
+                </List.Item>
+              )} />
+            )}
+          </Card>
+        </Col>
+      </Row>
     </Space>
   )
 }
@@ -709,7 +850,13 @@ function Sessions({ openTerm }: { openTerm: (n: string) => void }) {
             <Popconfirm key="k" title={`关闭 ${s.name}？`} onConfirm={() => kill(s.name)}><a style={{ color: '#f85149' }}>关闭</a></Popconfirm>,
           ]}>
             <List.Item.Meta
-              title={<Space>{cc[s.name] && <Tag color="purple" style={{ margin: 0 }}>🤖 Claude</Tag>}{cx[s.name] && <Tag color="green" style={{ margin: 0 }}>✸ Codex</Tag>}<span>{s.name}</span></Space>}
+              title={
+                <Space size={6}>
+                  <span>{s.name}</span>
+                  {cc[s.name] && <Tag color="purple" style={{ margin: 0 }}>🤖 Claude</Tag>}
+                  {cx[s.name] && <Tag color="green" style={{ margin: 0 }}>✸ Codex</Tag>}
+                </Space>
+              }
               description={`${s.windows} 窗口 · ${s.attached == 1 ? '已连接' : '空闲'}`} />
           </List.Item>
         )} />

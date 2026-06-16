@@ -29,11 +29,11 @@ _ttmux_completions() {
             COMPREPLY=($(compgen -W "spawn status send collect kill" -- "$cur"))
             return ;;
         swarm)
-            COMPREPLY=($(compgen -W "new add ls status activate collect adopt done archive rm" -- "$cur"))
+            COMPREPLY=($(compgen -W "new add ls status activate collect adopt done say feed watch board task sql archive rm" -- "$cur"))
             return ;;
-        adopt|activate|done|archive)
+        adopt|activate|done|archive|status|collect|say|feed|watch|sql|add|board)
             local swarms
-            swarms=$(ls -d ~/.local/share/ttmux/swarms/*/ 2>/dev/null | xargs -I{} basename {})
+            swarms=$(sqlite3 ~/.ttmux/meta.db "SELECT name FROM swarms;" 2>/dev/null)
             COMPREPLY=($(compgen -W "$swarms" -- "$cur"))
             return ;;
         sp|split)

@@ -33,14 +33,21 @@ show_help() {
     ${dim}兼容别名: agent spawn|status|send|collect|kill 仍可用${reset}
 
   ${bold}蜂群编排 ${magenta}(swarm — 有目标的任务组, 可被 cc 接管)${reset}
-    ${green}swarm new${reset}    ${dim}<名> [--goal "..."]${reset}        新建蜂群
+    ${green}swarm new${reset}    ${dim}<名> [--goal "..."] [--no-master]${reset}  新建蜂群(默认自带 cc 指挥, --no-master 跳过)
     ${green}swarm add${reset}    ${dim}<群> <成员> --type task|agent ...${reset}  加成员
                 ${dim}[--dir/--perm/--model] [--depends-on a,b] <命令或任务>${reset}
-    ${green}swarm ls${reset}                                列出蜂群 (目标/状态/指挥)
-    ${green}swarm status${reset} ${dim}<群>${reset}                    成员状态 + 依赖 + 挂起
+    ${green}swarm ls${reset}     ${dim}[--json]${reset}                    列出蜂群 (目标/状态/指挥)
+    ${green}swarm status${reset} ${dim}<群> [--json]${reset}             成员/依赖/挂起 + 看板摘要 + 广场最近
     ${green}swarm activate${reset} ${dim}<群> [成员] [--force]${reset}   解锁挂起成员 (--force 无视依赖)
     ${green}swarm done${reset}   ${dim}<群> [成员]${reset}             带成员=标该成员完成并解锁下游, 无成员=整群完成
     ${green}swarm collect${reset} ${dim}<群> [--json]${reset}          收集成员输出
+    ${magenta}广场${reset} ${green}swarm say${reset} ${dim}<群> [--as 成员][--kind 类型][--re id] <消息>${reset}  发言(自动署名)
+         ${green}swarm feed${reset} ${dim}<群> [-n N][--from][--kind][--since id][--json]${reset}  读消息流
+         ${green}swarm watch${reset} ${dim}<群>${reset}                  实时跟随广场
+    ${magenta}看板${reset} ${green}swarm board${reset} ${dim}<群> [--json]${reset}             看板全貌(按列)
+         ${green}swarm task add${reset} ${dim}<群> "标题" [--desc/--assignee/--deps/--col]${reset}  建卡
+         ${green}swarm task${reset} ${dim}<ls|show|assign|move|done|rm> <群> ...${reset}  列/详情/派活/流转/删
+    ${green}swarm sql${reset}    ${dim}<群> [--json] "SELECT ..."${reset}     只读查每群 swarm.db (web/调试)
     ${green}swarm adopt${reset}  ${dim}<群> [--by <cc会话>]${reset}     cc 接管 (拉起指挥会话)
     ${green}swarm archive${reset}|${green}rm${reset} ${dim}<群>${reset}             归档 / 删除
 

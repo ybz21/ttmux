@@ -3,7 +3,7 @@
 //   收 {type:'frame', data, w, h} | {type:'pong', t} | {type:'error', msg}
 //   发 {type:'nav', url} | {type:'ping', t} | {type:'mouse'|'wheel'|'key', ...}（输入仅 control=1 生效）
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Button, Input, Space, Switch, Tag, Segmented, App as AntApp } from 'antd'
+import { Button, Input, Space, Switch, Tag, App as AntApp } from 'antd'
 import { api } from './api'
 
 interface TabInfo { id: string; title: string; url: string }
@@ -58,9 +58,11 @@ function TabBar({ tabs, active, onSelect, onClose, onAdd, extra }: {
   )
 }
 
-// 清晰度档位（栏目级配置，存 localStorage）→ JPEG 质量
+// 清晰度档位（栏目级配置，存 localStorage）。'auto'=自适应，数字=固定 JPEG 质量
+type Quality = number | 'auto'
 const QKEY = 'ttmux.browser.quality'
-const QUALITY_OPTS = [
+const QUALITY_OPTS: { label: string; value: Quality }[] = [
+  { label: '自动', value: 'auto' },
   { label: '标清', value: 50 },
   { label: '高清', value: 80 },
   { label: '超清', value: 92 },
@@ -82,22 +84,32 @@ export default function BrowserView() {
   const stageRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const sizeRef = useRef({ w: 1280, h: 800 }) // 画面内在尺寸（CDP 设备像素）
-  const [control, setControl] = useState(false)
-  const controlRef = useRef(false)
+  const [control, setControl] = useState(true) // 默认接管（可在工具栏关掉变只读镜像）
+  const controlRef = useRef(true)
   const [connected, setConnected] = useState(false)
   const [url, setUrl] = useState('')
   const addrFocused = useRef(false) // 地址栏聚焦时不被轮询回写覆盖
   // 标签页（复用同一台 Chrome）
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [target, setTarget] = useState('') // 当前镜像的标签页 id；空 = 第一个
-  // 栏目级清晰度配置（持久化）
-  const [quality, setQuality] = useState<number>(() => Number(localStorage.getItem(QKEY)) || 80)
+  // 栏目级清晰度配置（持久化）；默认自适应
+  const [quality, setQuality] = useState<Quality>(() => {
+    const s = localStorage.getItem(QKEY)
+    if (s == null || s === 'auto') return 'auto'
+    return Number(s) || 'auto'
+  })
+  const [levelName, setLevelName] = useState('') // 服务端当前生效档位名（自适应时显示）
   // 实时指标
   const [latency, setLatency] = useState<number | null>(null)
   const [bw, setBw] = useState(0)   // 字节/秒
   const [fps, setFps] = useState(0)
   const bytesRef = useRef(0)
   const framesRef = useRef(0)
+  // 点击涟漪（乐观反馈，不等帧回来）+ 移动/滚轮节流
+  const [ripples, setRipples] = useState<{ id: number; x: number; y: number }[]>([])
+  const ripIdRef = useRef(0)
+  const lastMoveRef = useRef(0)
+  const wheelRef = useRef({ x: 0, y: 0, dx: 0, dy: 0, m: 0, timer: 0 as any })
 
   // control 开关用 ref 同步，供事件回调读取最新值
   useEffect(() => { controlRef.current = control }, [control])
@@ -157,28 +169,35 @@ export default function BrowserView() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     const params = new URLSearchParams()
     if (control) params.set('control', '1')
-    params.set('q', String(quality))
+    if (quality === 'auto') params.set('auto', '1')
+    else params.set('q', String(quality))
     if (target) params.set('target', target)
     const ws = new WebSocket(`${proto}://${location.host}/api/browser/stream?${params}`)
+    ws.binaryType = 'arraybuffer'
     wsRef.current = ws
     let objURL: string | null = null
     ws.onopen = () => setConnected(true)
     ws.onclose = () => setConnected(false)
     ws.onmessage = (e) => {
+      // 二进制 = 一帧：[w:u16][h:u16][seq:u16][jpeg...]；显示后回 ack 归还信用
+      if (typeof e.data !== 'string') {
+        if (!imgRef.current) return
+        const buf = e.data as ArrayBuffer
+        const dv = new DataView(buf)
+        const w = dv.getUint16(0, true), h = dv.getUint16(2, true), seq = dv.getUint16(4, true)
+        sizeRef.current = { w: w || 1280, h: h || 800 }
+        bytesRef.current += buf.byteLength
+        framesRef.current++
+        if (objURL) URL.revokeObjectURL(objURL)
+        objURL = URL.createObjectURL(new Blob([new Uint8Array(buf, 6)], { type: 'image/jpeg' }))
+        imgRef.current.src = objURL
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ack', n: seq }))
+        return
+      }
       const msg = JSON.parse(e.data)
       if (msg.type === 'error') { message.error(msg.msg); return }
       if (msg.type === 'pong') { setLatency(Math.round(performance.now() - msg.t)); return }
-      if (msg.type === 'frame' && imgRef.current) {
-        sizeRef.current = { w: msg.w || 1280, h: msg.h || 800 }
-        const bytes = atob(msg.data)
-        const arr = new Uint8Array(bytes.length)
-        for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i)
-        bytesRef.current += arr.length
-        framesRef.current++
-        if (objURL) URL.revokeObjectURL(objURL)
-        objURL = URL.createObjectURL(new Blob([arr], { type: 'image/jpeg' }))
-        imgRef.current.src = objURL
-      }
+      if (msg.type === 'level') { setLevelName(msg.name || ''); return }
     }
     // 每秒打一次 ping 测 RTT，并结算带宽/帧率
     const ping = setInterval(() => {
@@ -206,7 +225,7 @@ export default function BrowserView() {
     act('navigate', { url: u })
   }
 
-  const changeQuality = (v: number) => { setQuality(v); localStorage.setItem(QKEY, String(v)) }
+  const changeQuality = (v: Quality) => { setQuality(v); localStorage.setItem(QKEY, String(v)) }
 
   // 把鼠标坐标换算成 CDP 期望的页面 CSS 像素坐标。
   // 关键：<img> 用 object-fit: contain，画面在元素框内居中留黑边，
@@ -230,15 +249,41 @@ export default function BrowserView() {
   const mods = (e: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) =>
     (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0)
 
+  // 乐观点击反馈：在点击处画一圈扩散涟漪，不等画面回来 → 主观"秒响应"
+  const addRipple = (e: React.MouseEvent) => {
+    const st = stageRef.current
+    if (!st) return
+    const r = st.getBoundingClientRect()
+    const id = ++ripIdRef.current
+    setRipples((rs) => [...rs, { id, x: e.clientX - r.left, y: e.clientY - r.top }])
+    setTimeout(() => setRipples((rs) => rs.filter((p) => p.id !== id)), 450)
+  }
   const onMouse = (sub: string) => (e: React.MouseEvent) => {
     if (!controlRef.current) return
     e.preventDefault()
-    if (sub === 'down') stageRef.current?.focus() // 拿焦点，键盘事件才进得来
+    if (sub === 'down') { stageRef.current?.focus(); addRipple(e) } // 拿焦点 + 涟漪
     send({ type: 'mouse', sub, ...mapXY(e), button: 'left', modifiers: mods(e) })
   }
+  // 移动节流：低带宽下高频 move 会挤占上行，限到 ~45ms 一发
+  const onMove = (e: React.MouseEvent) => {
+    if (!controlRef.current) return
+    const now = performance.now()
+    if (now - lastMoveRef.current < 45) return
+    lastMoveRef.current = now
+    send({ type: 'mouse', sub: 'move', ...mapXY(e), modifiers: mods(e) })
+  }
+  // 滚轮合并：40ms 窗口内累加 delta 后一次性发，避免滚动时刷爆上行
   const onWheel = (e: React.WheelEvent) => {
     if (!controlRef.current) return
-    send({ type: 'wheel', ...mapXY(e as any), deltaX: e.deltaX, deltaY: e.deltaY, modifiers: mods(e) })
+    const { x, y } = mapXY(e as any)
+    const w = wheelRef.current
+    w.x = x; w.y = y; w.dx += e.deltaX; w.dy += e.deltaY; w.m = mods(e)
+    if (!w.timer) {
+      w.timer = setTimeout(() => {
+        send({ type: 'wheel', x: w.x, y: w.y, deltaX: w.dx, deltaY: w.dy, modifiers: w.m })
+        w.dx = 0; w.dy = 0; w.timer = 0
+      }, 40)
+    }
   }
   const onKey = (e: React.KeyboardEvent) => {
     if (!controlRef.current) return
@@ -264,9 +309,26 @@ export default function BrowserView() {
         extra={
           <Space size={10} style={{ paddingRight: 4 }}>
             <Space size={4}>接管<Switch size="small" checked={control} onChange={setControl} /></Space>
-            <Segmented size="small" options={QUALITY_OPTS} value={quality} onChange={(v) => changeQuality(v as number)} />
+            {/* 清晰度：选中档亮蓝底 + 白字加粗 + 辉光，未选中压暗，对比鲜明 */}
+            <Space.Compact size="small">
+              {QUALITY_OPTS.map((o) => {
+                const on = quality === o.value
+                return (
+                  <Button
+                    key={String(o.value)}
+                    size="small"
+                    type={on ? 'primary' : 'default'}
+                    onClick={() => changeQuality(o.value)}
+                    style={on
+                      ? { background: '#1f6feb', borderColor: '#1f6feb', color: '#fff', fontWeight: 700, boxShadow: '0 0 0 2px rgba(31,111,235,.35)', zIndex: 1 }
+                      : { background: 'transparent', borderColor: '#30363d', color: '#8b949e' }}
+                  >{o.label}</Button>
+                )
+              })}
+            </Space.Compact>
             <Tag color={connected ? 'green' : 'red'} style={{ marginInlineEnd: 0 }}>{connected ? '已连接' : '未连接'}</Tag>
             <span style={{ color: '#8b949e', fontSize: 12, whiteSpace: 'nowrap' }}>
+              {quality === 'auto' && levelName ? <span style={{ color: '#58a6ff' }}>{levelName} ·</span> : null}
               {cell(latency == null ? '—' : latency + 'ms', 48)} ·{cell(fmtRate(bw), 70)} ·{cell(fps + 'fps', 42)}
             </span>
           </Space>
@@ -291,13 +353,18 @@ export default function BrowserView() {
         />
         <Button size="small" onClick={navigate}>前往</Button>
       </div>
+      <style>{`
+        .bv-ripple{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;
+          border:2px solid #58a6ff;pointer-events:none;animation:bvRip .45s ease-out forwards;}
+        @keyframes bvRip{from{transform:scale(.3);opacity:.9}to{transform:scale(2.6);opacity:0}}
+      `}</style>
       <div
         ref={stageRef}
         tabIndex={0}
         onKeyDown={onKey}
         onWheel={onWheel}
         style={{
-          flex: 1, minHeight: 0, background: '#000', overflow: 'hidden',
+          flex: 1, minHeight: 0, background: '#000', overflow: 'hidden', position: 'relative',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           cursor: control ? 'default' : 'not-allowed', outline: 'none',
         }}
@@ -307,9 +374,12 @@ export default function BrowserView() {
           draggable={false}
           onMouseDown={onMouse('down')}
           onMouseUp={onMouse('up')}
-          onMouseMove={onMouse('move')}
+          onMouseMove={onMove}
           style={{ width: '100%', height: '100%', objectFit: 'contain' }}
         />
+        {ripples.map((p) => (
+          <span key={p.id} className="bv-ripple" style={{ left: p.x, top: p.y }} />
+        ))}
       </div>
     </div>
   )

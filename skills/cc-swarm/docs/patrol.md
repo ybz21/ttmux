@@ -9,14 +9,24 @@
 
 ### 蜂群作用域怎么探测成员
 
-被 `--swarm <名>` 调起时，**不要**用 `ttmux ls` 扫全局，而是读蜂群清单：
+被 `--swarm <名>` 调起时，**不要**用 `ttmux ls` 扫全局，而是读蜂群的三个面：
 
 ```bash
-ttmux swarm status <名>     # 成员状态 + 依赖 + 目标
-ttmux swarm collect <名>    # 各成员的输出
+ttmux swarm status <名>            # 成员运行态 + 依赖 + 挂起
+ttmux swarm board  <名>            # 看板：谁负责什么、卡在哪一列
+ttmux swarm feed   <名> --since <上次id>   # 广场：完成/提问/阻塞 的结构化播报
+ttmux swarm collect <名>           # (兜底)各成员的终端输出
 ```
 
+> **巡检信号优先读「广场 + 看板」，不要纯抓终端。** 成员把进展/提问/阻塞结构化地发到广场、
+> 把卡片在看板上流转，比 capture 屏幕鲁棒得多；终端 capture 只在需要深看某成员在干嘛时兜底。
+
 成员会话名形如 `<名>-<成员>`。监护时：
+- **读广场**：每轮 `swarm feed <名> --since <上次id>` 拉新消息——
+  - `--kind block`（有人卡住）→ 最高优先，介入排障；
+  - `--kind ask`（有人提问）→ 答疑，可 `swarm say <名> --kind decide --re <id> "<裁决>"`；
+  - `--kind done`（完成播报）→ 去 review，通过后推进看板 + 解锁下游（见下）。
+- **读看板**：`swarm board <名>` 看任务全貌——`doing` 太久不动的去看一眼，`review` 列的去审，`blocked` 列的去解。
 - **目标对照**：`swarm status` 顶部的「目标」就是验收基准，集成时逐条核对。
 - **依赖解锁（关键闭环）**：带依赖且依赖未满足的成员会被 ttmux **挂起为 pending**（`swarm status` 底部「挂起(等依赖)」段列出，`依赖→ X`）。解锁靠你打「完成」标记驱动：
   - **agent 成员是长驻会话**（claude 不退出），脚本判不出它「完成」。所以**当你读 capture 判定某成员 X 真的完成了**（输出了总结、idle 在空 prompt、产出对照需求 OK），就执行：

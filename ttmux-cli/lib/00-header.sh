@@ -17,6 +17,8 @@ TTMUX_GROUPS="${TTMUX_DATA}/groups"
 TTMUX_ENV="${TTMUX_DATA}/env"
 TTMUX_META="${TTMUX_DATA}/meta"
 TTMUX_SWARMS="${TTMUX_DATA}/swarms"
+# 蜂群 SQLite 存储新家（meta.db + swarms/<id>/swarm.db）；普通会话暂留 TTMUX_DATA
+TTMUX_HOME="${TTMUX_HOME:-${HOME}/.ttmux}"
 
 mkdir -p "$TTMUX_LOGS" "$TTMUX_GROUPS" "$TTMUX_META" "$TTMUX_SWARMS"
 

@@ -97,6 +97,45 @@ func (a *API) Capture(c *gin.Context) {
 	a.text(c, "capture", c.Param("name"), "--lines", c.DefaultQuery("lines", "200"))
 }
 
+// 允许注入的具名按键（其余只允许单个字母/数字）。用于在专业渲染模式下响应 TUI 选择框。
+var allowedKeys = map[string]bool{
+	"Up": true, "Down": true, "Left": true, "Right": true,
+	"Enter": true, "Escape": true, "Tab": true, "Space": true, "BSpace": true,
+}
+
+// Keys POST /sessions/:name/keys —— 向会话注入原始按键（不追加回车）。
+// body: {"keys":["Down","Enter"]} 或 {"keys":["2"]}；经白名单校验后 tmux send-keys。
+// 之所以单列一个端点：/tasks/_/send 只能发「文本+回车」，无法发方向键/裸数字/Esc，
+// 而 Claude/Codex 的权限确认/选项菜单需要这些键来选择。
+func (a *API) Keys(c *gin.Context) {
+	name := c.Param("name")
+	var b struct {
+		Keys []string `json:"keys"`
+	}
+	if err := c.ShouldBindJSON(&b); err != nil || len(b.Keys) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "BAD_REQUEST"}})
+		return
+	}
+	args := []string{"send-keys", "-t", name}
+	for _, k := range b.Keys {
+		ok := allowedKeys[k]
+		if !ok && len(k) == 1 {
+			ch := k[0]
+			ok = (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+		}
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "BAD_KEY", "message": k}})
+			return
+		}
+		args = append(args, k)
+	}
+	if err := exec.Command("tmux", args...).Run(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"code": "TMUX_ERROR", "message": err.Error()}})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": "ok"})
+}
+
 // SessionCwd GET /sessions/:name/cwd —— 返回会话活动 pane 的工作目录（供文件侧栏定位根）。
 func (a *API) SessionCwd(c *gin.Context) {
 	out, err := exec.Command("tmux", "display-message", "-p", "-t", c.Param("name"), "#{pane_current_path}").Output()

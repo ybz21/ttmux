@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>蜂群 Web 视觉稿 · ttmux</title>
+<style>
+  /* ── ttmux 深色配色（取自 frontend/src/App.tsx） ── */
+  :root{
+    --bg:#0d1117; --bg2:#161b22; --bg3:#06090d; --line:#21262d; --line2:#30363d;
+    --fg:#e6edf3; --fg2:#8b949e; --fg3:#6e7681;
+    --blue:#58a6ff; --primary:#1f6feb; --green:#3fb950; --amber:#d29922;
+    --red:#f85149; --magenta:#d2a8ff; --cyan:#39c5cf;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
+  .app{display:flex;min-height:100vh}
+
+  /* ── 左侧导航 Sider ── */
+  .sider{width:208px;flex:0 0 208px;background:var(--bg);border-right:1px solid var(--line);display:flex;flex-direction:column}
+  .brand{display:flex;align-items:center;gap:11px;padding:18px 18px 16px}
+  .mark{width:34px;height:34px;border-radius:10px;background:linear-gradient(145deg,#3a4250,#1c2128);display:grid;place-items:center;box-shadow:0 1px 3px rgba(0,0,0,.5);color:#c3c9d1}
+  .brand .t{font-weight:800;font-size:19px;letter-spacing:.5px;background:linear-gradient(180deg,#f5f7fa,#9aa1ab);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .brand .s{color:var(--fg3);font-size:11px;letter-spacing:2px}
+  .nav{padding:6px 8px;display:flex;flex-direction:column;gap:2px}
+  .nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;color:var(--fg2);text-decoration:none;font-size:14px}
+  .nav a.on{background:#1f6feb22;color:#fff}
+  .nav svg{width:18px;height:18px}
+
+  /* ── 主区 ── */
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .toolbar{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
+  .seg{display:inline-flex;background:var(--bg2);border:1px solid var(--line2);border-radius:8px;overflow:hidden}
+  .seg button{border:0;background:none;color:var(--fg2);padding:5px 14px;cursor:pointer;font-size:13px}
+  .seg button.on{background:#30363d;color:#fff}
+  .hint{margin-left:auto;color:var(--fg3);font-size:12px}
+  .hint code{background:var(--bg2);padding:1px 6px;border-radius:5px;color:var(--blue)}
+  .screen{padding:14px;display:none}
+  .screen.on{display:block}
+
+  /* ── 通用卡片/Tag ── */
+  .card{background:var(--bg2);border:1px solid var(--line2);border-radius:10px}
+  .tag{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:1px 8px;border-radius:10px;border:1px solid}
+  .t-run{color:var(--amber);border-color:#d2992255;background:#d2992215}
+  .t-done{color:var(--green);border-color:#3fb95055;background:#3fb95015}
+  .t-plan{color:var(--fg2);border-color:var(--line2);background:#ffffff08}
+  .t-agent{color:var(--magenta);border-color:#d2a8ff55;background:#d2a8ff12}
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+
+  /* ── 列表页 ── */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+  .swarm-card{padding:14px;cursor:pointer;transition:border-color .15s}
+  .swarm-card:hover{border-color:var(--blue)}
+  .swarm-card h3{margin:0 0 6px;font-size:16px;display:flex;align-items:center;gap:8px}
+  .goal{color:var(--fg2);font-size:13px;margin:0 0 12px}
+  .meta{display:flex;align-items:center;gap:12px;color:var(--fg2);font-size:12px}
+  .pips{display:inline-flex;gap:3px}
+  .pip{width:8px;height:8px;border-radius:2px;background:var(--green)}
+  .pip.off{background:#30363d}
+  .sup{color:var(--magenta)}
+
+  /* ── 详情仪表盘 ── */
+  .head{display:flex;align-items:center;gap:14px;padding:12px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .head .back{color:var(--fg2);text-decoration:none}
+  .head .name{font-size:17px;font-weight:700}
+  .head .g{color:var(--fg2);font-size:13px}
+  .head .stat{margin-left:auto;color:var(--fg2);font-size:12px}
+  .dash{display:grid;grid-template-columns:1.35fr 1fr;grid-template-rows:auto auto;gap:12px;padding:12px 14px}
+  .panel{background:var(--bg2);border:1px solid var(--line2);border-radius:10px;display:flex;flex-direction:column;min-height:0}
+  .panel>.ph{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line);font-size:13px;color:var(--fg2)}
+  .panel>.ph .x{margin-left:auto}
+  .btn{background:#21262d;border:1px solid var(--line2);color:var(--fg);border-radius:7px;padding:3px 10px;font-size:12px;cursor:pointer}
+  .btn.pri{background:var(--primary);border-color:var(--primary)}
+  .topo{grid-row:1} .plaza{grid-row:1} .board{grid-column:1 / -1}
+
+  /* ── 拓扑 SVG ── */
+  .topo svg{width:100%;height:300px;display:block}
+  .node-label{font:600 12px sans-serif;fill:var(--fg)}
+  .node-sub{font:11px sans-serif;fill:var(--fg2)}
+  @keyframes pulse{0%,100%{opacity:.35}50%{opacity:.9}}
+  .pulse{animation:pulse 1.8s ease-in-out infinite}
+
+  /* ── 广场 ── */
+  .feed{flex:1;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:9px;max-height:300px}
+  .post{display:flex;gap:8px;align-items:flex-start;font-size:13px}
+  .post .id{color:var(--fg3);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap;padding-top:2px}
+  .post .who{font-weight:600;white-space:nowrap}
+  .who.master{color:var(--magenta)} .who.human{color:var(--blue)} .who.member{color:var(--green)}
+  .post .txt{color:var(--fg)}
+  .kind{font-size:12px}
+  .compose{display:flex;gap:8px;padding:9px 12px;border-top:1px solid var(--line)}
+  .compose select,.compose input{background:var(--bg3);border:1px solid var(--line2);color:var(--fg);border-radius:7px;padding:5px 8px;font-size:13px}
+  .compose input{flex:1}
+
+  /* ── 看板 ── */
+  .cols{display:flex;gap:10px;padding:12px;overflow-x:auto}
+  .col{flex:0 0 188px;background:var(--bg3);border:1px solid var(--line);border-radius:9px;display:flex;flex-direction:column;min-height:160px}
+  .col .ch{display:flex;align-items:center;gap:6px;padding:8px 10px;font-size:12px;color:var(--fg2);border-bottom:1px solid var(--line)}
+  .col .ch .n{margin-left:auto;background:#30363d;border-radius:9px;padding:0 7px;font-size:11px}
+  .col.blocked .ch{color:var(--red)} .col.done .ch{color:var(--green)}
+  .col-body{padding:8px;display:flex;flex-direction:column;gap:8px}
+  .ticket{background:var(--bg2);border:1px solid var(--line2);border-radius:8px;padding:9px;cursor:grab}
+  .ticket.focus{border-color:var(--blue);box-shadow:0 0 0 1px var(--blue)}
+  .ticket .tt{font-size:13px;margin-bottom:6px}
+  .ticket .tm{display:flex;gap:6px;align-items:center;color:var(--fg2);font-size:11px}
+  .assignee{color:var(--green)}
+  .dep{color:var(--fg3)}
+  .legend{padding:6px 14px 14px;color:var(--fg3);font-size:12px}
+  svg .node{cursor:pointer}
+
+  /* ── 节点详情抽屉 ── */
+  .scrim{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;z-index:40}
+  .scrim.on{display:block}
+  .drawer{position:fixed;top:0;right:0;height:100%;width:380px;max-width:92vw;background:var(--bg2);
+    border-left:1px solid var(--line2);box-shadow:-8px 0 24px rgba(0,0,0,.4);z-index:41;
+    transform:translateX(100%);transition:transform .2s;display:flex;flex-direction:column}
+  .drawer.on{transform:none}
+  .dh{display:flex;align-items:center;gap:10px;padding:14px;border-bottom:1px solid var(--line)}
+  .dh .nm{font-size:16px;font-weight:700}
+  .dh .cls{margin-left:auto;color:var(--fg2);background:none;border:0;font-size:18px;cursor:pointer}
+  .dbody{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:16px}
+  .sect h4{margin:0 0 7px;font-size:12px;color:var(--fg2);font-weight:600;letter-spacing:.5px}
+  .kv{color:var(--fg);font-size:13px}
+  .kv .dim{color:var(--fg2)}
+  .snap{background:var(--bg3);border:1px solid var(--line);border-radius:8px;padding:10px;font:12px/1.5 ui-monospace,Menlo,monospace;color:#c9d1d9;white-space:pre-wrap;max-height:150px;overflow:auto}
+  .mini{display:flex;flex-direction:column;gap:6px}
+  .mini .row{display:flex;align-items:center;gap:8px;font-size:13px;background:var(--bg3);border:1px solid var(--line);border-radius:7px;padding:7px 9px}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- 左侧导航 -->
+  <aside class="sider">
+    <div class="brand">
+      <div class="mark">≋</div>
+      <div><div class="t">ttmux</div><div class="s">CONSOLE</div></div>
+    </div>
+    <nav class="nav">
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>概览</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><polyline points="5 8 9 12 5 16"/><line x1="12" y1="16" x2="18" y2="16"/></svg>会话</a>
+      <a class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="5" r="2.4"/><circle cx="5" cy="17" r="2.4"/><circle cx="19" cy="17" r="2.4"/><line x1="12" y1="7.4" x2="6.5" y2="14.8"/><line x1="12" y1="7.4" x2="17.5" y2="14.8"/></svg>蜂群</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="9" cy="7" r="2.3"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="15" cy="17" r="2.3"/></svg>系统配置</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>浏览器</a>
+    </nav>
+  </aside>
+
+  <!-- 主区 -->
+  <div class="main">
+    <div class="toolbar">
+      <div class="seg">
+        <button id="b-list" onclick="show('list')">蜂群列表</button>
+        <button id="b-detail" class="on" onclick="show('detail')">详情仪表盘</button>
+      </div>
+      <span class="hint">视觉稿（静态 mock）· 建群在终端 <code>ttmux swarm new</code></span>
+    </div>
+
+    <!-- 列表页 -->
+    <section id="s-list" class="screen">
+      <div class="grid">
+        <div class="card swarm-card" onclick="show('detail')">
+          <h3><span style="color:var(--magenta)">◆</span> login <span class="tag t-run"><i class="dot" style="background:var(--amber)"></i>running</span></h3>
+          <p class="goal">目标：加登录页 + 调 API 契约</p>
+          <div class="meta"><span class="pips"><i class="pip"></i><i class="pip"></i><i class="pip off"></i></span> 2/3 活 · <span style="color:var(--amber)">+1 待解锁</span> · <span class="sup">◆cc-login</span></div>
+        </div>
+        <div class="card swarm-card">
+          <h3><span style="color:var(--magenta)">◆</span> refactor <span class="tag t-done">done</span></h3>
+          <p class="goal">目标：抽取支付模块</p>
+          <div class="meta"><span class="pips"><i class="pip"></i><i class="pip"></i></span> 2/2 完成</div>
+        </div>
+        <div class="card swarm-card">
+          <h3><span style="color:var(--magenta)">◆</span> docs <span class="tag t-plan">planning</span></h3>
+          <p class="goal">目标：补 API 文档</p>
+          <div class="meta" style="color:var(--fg3)">还没有成员</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 详情仪表盘 -->
+    <section id="s-detail" class="screen on">
+      <div class="head">
+        <a class="back" href="#" onclick="show('list');return false">← 蜂群</a>
+        <span class="name">login</span>
+        <span class="g">目标：加登录页</span>
+        <span class="tag t-run"><i class="dot" style="background:var(--amber)"></i>running</span>
+        <span class="g sup">◆ cc-login</span>
+        <span class="stat">3 成员 · 2 活 · 1 待解锁</span>
+      </div>
+
+      <div class="dash">
+        <!-- 拓扑 -->
+        <div class="panel topo">
+          <div class="ph">拓扑 · 实时依赖图 <span class="x" style="font-size:11px">点节点 → 进终端 / 联动看板·广场</span></div>
+          <svg viewBox="0 0 520 300" preserveAspectRatio="xMidYMid meet">
+            <defs>
+              <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#3fb950"/></marker>
+            </defs>
+            <!-- 指挥边 master→api / master→ui (暗虚线) -->
+            <path d="M260 70 C200 95, 130 95, 110 118" stroke="#8b949e" stroke-width="1.3" stroke-dasharray="4 4" fill="none" opacity=".6"/>
+            <path d="M260 70 C320 95, 390 95, 410 118" stroke="#8b949e" stroke-width="1.3" stroke-dasharray="4 4" fill="none" opacity=".6"/>
+            <!-- 依赖边 api→test (实线绿箭头) -->
+            <path d="M110 170 L110 222" stroke="#3fb950" stroke-width="1.8" fill="none" marker-end="url(#arr)"/>
+            <text x="118" y="200" class="node-sub" fill="#3fb950">依赖</text>
+
+            <!-- master -->
+            <g class="node" onclick="openNode('master')">
+              <rect x="206" y="26" width="108" height="44" rx="10" fill="#d2a8ff14" stroke="#d2a8ff" stroke-width="1.6"/>
+              <text x="260" y="46" text-anchor="middle" class="node-label" fill="#d2a8ff">◆ master</text>
+              <text x="260" y="61" text-anchor="middle" class="node-sub">cc-login · 指挥</text>
+            </g>
+            <!-- api (running, pulse) -->
+            <g class="node" onclick="openNode('api')">
+              <rect class="pulse" x="56" y="118" width="108" height="52" rx="10" fill="none" stroke="#3fb950" stroke-width="2"/>
+              <rect x="56" y="118" width="108" height="52" rx="10" fill="#3fb95010" stroke="#3fb950" stroke-width="1.4"/>
+              <circle cx="72" cy="135" r="4" fill="#3fb950"/>
+              <text x="84" y="139" class="node-label">api</text>
+              <text x="68" y="158" class="node-sub" fill="#3fb950">running · agent</text>
+            </g>
+            <!-- ui (running) -->
+            <g class="node" onclick="openNode('ui')">
+              <rect class="pulse" x="356" y="118" width="108" height="52" rx="10" fill="none" stroke="#3fb950" stroke-width="2"/>
+              <rect x="356" y="118" width="108" height="52" rx="10" fill="#3fb95010" stroke="#3fb950" stroke-width="1.4"/>
+              <circle cx="372" cy="135" r="4" fill="#3fb950"/>
+              <text x="384" y="139" class="node-label">ui</text>
+              <text x="368" y="158" class="node-sub" fill="#3fb950">running · agent</text>
+            </g>
+            <!-- test (pending) -->
+            <g class="node" onclick="openNode('test')">
+              <rect x="56" y="224" width="120" height="52" rx="10" fill="#d2992210" stroke="#d29922" stroke-width="1.5" stroke-dasharray="6 4"/>
+              <text x="72" y="248" class="node-label" fill="#d29922">⏳ test</text>
+              <text x="68" y="265" class="node-sub" fill="#d29922">挂起 · 依赖→api</text>
+            </g>
+          </svg>
+        </div>
+
+        <!-- 广场 -->
+        <div class="panel plaza">
+          <div class="ph">广场 · 协作墙 <span class="x" style="font-size:11px">增量轮询</span></div>
+          <div class="feed">
+            <div class="post"><span class="id">#12 14:02</span><span class="who master">◆ master</span><span class="kind">📢</span><span class="txt">开工。看板已派活，各成员认领自己的卡。</span></div>
+            <div class="post"><span class="id">#13 14:08</span><span class="who member">● api</span><span class="kind" style="color:var(--green)">✔</span><span class="txt">认证后端完成，契约 POST /auth/login → {token}</span></div>
+            <div class="post"><span class="id">#14 14:09</span><span class="who member">● ui</span><span class="kind" style="color:var(--amber)">?</span><span class="txt">token 放 header 还是 body？</span></div>
+            <div class="post"><span class="id">#15 14:10</span><span class="who master">◆ master</span><span class="kind" style="color:var(--cyan)">◎</span><span class="txt">放 Authorization: Bearer。</span></div>
+            <div class="post"><span class="id">#16 14:12</span><span class="who human">● human</span><span class="kind">·</span><span class="txt">登录页配色跟主站统一一下。</span></div>
+          </div>
+          <div class="compose">
+            <select><option>note</option><option>ask</option><option>decide</option><option>broadcast</option></select>
+            <input placeholder="以 human 身份发言…" />
+            <button class="btn pri">发言</button>
+          </div>
+        </div>
+
+        <!-- 看板 -->
+        <div class="panel board">
+          <div class="ph">看板 · 真拖拽 Kanban <button class="btn x">+ 建卡</button></div>
+          <div class="cols">
+            <div class="col"><div class="ch">backlog <span class="n">1</span></div><div class="col-body">
+              <div class="ticket"><div class="tt">登录页配色统一</div><div class="tm"><span class="assignee">@ui</span></div></div>
+            </div></div>
+            <div class="col"><div class="ch">assigned <span class="n">1</span></div><div class="col-body">
+              <div class="ticket"><div class="tt">前端登录页</div><div class="tm"><span class="assignee">@ui</span><span class="dep">⛓ 依赖 t1</span></div></div>
+            </div></div>
+            <div class="col"><div class="ch">doing <span class="n">1</span></div><div class="col-body">
+              <div class="ticket focus"><div class="tt">认证后端</div><div class="tm"><span class="assignee">@api</span></div></div>
+            </div></div>
+            <div class="col"><div class="ch">review <span class="n">0</span></div><div class="col-body"></div></div>
+            <div class="col done"><div class="ch">done <span class="n">0</span></div><div class="col-body"></div></div>
+            <div class="col blocked"><div class="ch">blocked <span class="n">0</span></div><div class="col-body"></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="legend">👆 点拓扑里任一节点 → 滑出「节点详情」　|　状态色：<span style="color:var(--green)">● running(脉冲)</span> · <span style="color:var(--green)">✔ done</span> · <span style="color:var(--amber)">⏳ 挂起</span> · <span style="color:var(--red)">✕ 失败/阻塞</span> · <span style="color:var(--magenta)">◆ master</span></div>
+    </section>
+  </div>
+</div>
+
+<!-- 节点详情抽屉 -->
+<div class="scrim" id="scrim" onclick="closeNode()"></div>
+<aside class="drawer" id="drawer">
+  <div class="dh">
+    <span class="dot" id="d-dot"></span>
+    <span class="nm" id="d-name"></span>
+    <span class="tag" id="d-tag"></span>
+    <button class="cls" onclick="closeNode()">✕</button>
+  </div>
+  <div class="dbody">
+    <div class="sect"><h4>身份</h4><div class="kv" id="d-id"></div></div>
+    <div class="sect"><h4>任务</h4><div class="kv" id="d-task"></div></div>
+    <div class="sect">
+      <h4>终端快照（实时预览）</h4>
+      <pre class="snap" id="d-snap"></pre>
+      <button class="btn pri" style="margin-top:8px">进入终端 ↗</button>
+    </div>
+    <div class="sect"><h4>它的看板卡</h4><div class="mini" id="d-cards"></div></div>
+    <div class="sect"><h4>它的广场发言</h4><div class="mini" id="d-posts"></div></div>
+  </div>
+</aside>
+
+<script>
+  function show(which){
+    document.getElementById('s-list').classList.toggle('on', which==='list');
+    document.getElementById('s-detail').classList.toggle('on', which==='detail');
+    document.getElementById('b-list').classList.toggle('on', which==='list');
+    document.getElementById('b-detail').classList.toggle('on', which==='detail');
+  }
+
+  // ── 节点详情抽屉（每个节点 = 一个 cc，点开聚合查看） ──
+  var NODES = {
+    master: { name:'master', color:'var(--magenta)', tag:'指挥', tagCls:'t-agent',
+      id:'类型 master · 会话 <b>cc-login</b> · 加载 cc-swarm skill',
+      task:'目标：加登录页。负责拆活/派活/巡检/验收。',
+      snap:'● 巡检中…\n› swarm feed login --kind block\n  (无阻塞)\n› swarm board login\n  doing:1 assigned:1 backlog:1',
+      cards:[], posts:['#12 📢 开工，各认领自己的卡','#15 ◎ 放 Authorization: Bearer'] },
+    api: { name:'api', color:'var(--green)', tag:'running', tagCls:'t-done',
+      id:'类型 agent · 会话 <b>login-api</b>',
+      task:'实现登录 API（注册 / 登录 / JWT）。被依赖：test',
+      snap:'⏺ 已实现 POST /auth/login\n  返回 { token }\n› go test ./auth/...\n  ok  auth  0.21s\n❯ ',
+      cards:['认证后端 · doing'], posts:['#13 ✔ 契约 POST /auth/login → {token}'] },
+    ui: { name:'ui', color:'var(--green)', tag:'running', tagCls:'t-done',
+      id:'类型 agent · 会话 <b>login-ui</b> · 依赖 → api',
+      task:'登录 / 注册页 + 调 api 的契约。',
+      snap:'⏺ 渲染登录表单\n› 等待 api 契约确认 token 放哪\n❯ ',
+      cards:['前端登录页 · assigned'], posts:['#14 ? token 放 header 还是 body？'] },
+    test: { name:'test', color:'var(--amber)', tag:'挂起', tagCls:'t-run',
+      id:'类型 agent · 会话 <b>login-test</b>（未启动）',
+      task:'端到端测试。挂起中，依赖 → api 完成后自动解锁。',
+      snap:'(挂起：等依赖 api 完成，尚未 spawn)',
+      cards:[], posts:[] },
+  };
+  function openNode(key){
+    var n = NODES[key]; if(!n) return;
+    document.getElementById('d-dot').style.background = n.color;
+    document.getElementById('d-name').textContent = n.name;
+    var tag = document.getElementById('d-tag'); tag.textContent = n.tag; tag.className = 'tag ' + n.tagCls;
+    document.getElementById('d-id').innerHTML = n.id;
+    document.getElementById('d-task').textContent = n.task;
+    document.getElementById('d-snap').textContent = n.snap;
+    document.getElementById('d-cards').innerHTML = n.cards.length
+      ? n.cards.map(function(c){return '<div class="row">🗂 '+c+'</div>'}).join('') : '<div class="row" style="color:var(--fg3)">（暂无）</div>';
+    document.getElementById('d-posts').innerHTML = n.posts.length
+      ? n.posts.map(function(p){return '<div class="row">'+p+'</div>'}).join('') : '<div class="row" style="color:var(--fg3)">（暂无）</div>';
+    document.getElementById('scrim').classList.add('on');
+    document.getElementById('drawer').classList.add('on');
+  }
+  function closeNode(){
+    document.getElementById('scrim').classList.remove('on');
+    document.getElementById('drawer').classList.remove('on');
+  }
+</script>
+</body>
+</html>

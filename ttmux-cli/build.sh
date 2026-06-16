@@ -15,6 +15,7 @@ OUT="${SCRIPT_DIR}/../ttmux"
 MODULES=(
     00-header
     core
+    store
     env
     group
     status
@@ -24,6 +25,8 @@ MODULES=(
     collect
     agent
     swarm
+    plaza
+    board
     completion
     help
     interactive

@@ -5,6 +5,7 @@ import { Button, Input } from 'antd'
 import { api } from './api'
 import FileBrowser from './FileBrowser'
 import Markdown from './Markdown'
+import { PromptPanel } from './prompt'
 
 interface Block { kind: string; text?: string; name?: string; input?: string; isError?: boolean }
 interface Msg { role: string; blocks: Block[]; ts?: string }
@@ -130,6 +131,8 @@ export default function ClaudeChat({ name, file, dir, onBack }: { name: string; 
           {msgs.length === 0 && <div style={{ color: '#8b949e', textAlign: 'center', marginTop: 30 }}>加载对话记录…</div>}
           {msgs.map((m, i) => <Bubble key={i} m={m} />)}
         </div>
+        {/* 交互式选择框（权限确认/选项菜单）：检测到才显示，可点选 */}
+        <PromptPanel name={name} accent="#d2a8ff" />
         {/* 输入 */}
         {err && <div style={{ color: '#f85149', fontSize: 12, padding: '2px 12px' }}>{err}</div>}
         <div style={{ display: 'flex', gap: 8, padding: 10, borderTop: '1px solid #30363d' }}>

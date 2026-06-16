@@ -67,6 +67,7 @@ func New(cfg Config) *gin.Engine {
 		g.POST("/sessions", h.NewSession)
 		g.DELETE("/sessions/:name", h.KillSession)
 		g.GET("/sessions/:name/capture", h.Capture)
+		g.POST("/sessions/:name/keys", h.Keys)                       // 注入原始按键（响应 TUI 选择框）
 		g.GET("/sessions/:name/cwd", h.SessionCwd)                   // 会话工作目录（文件侧栏定位）
 		g.GET("/sessions/:name/claude", h.ClaudeStatus)              // 检测是否在跑 claude
 		g.GET("/sessions/:name/transcript", h.ClaudeTranscript)      // 读 claude 对话记录
@@ -79,6 +80,21 @@ func New(cfg Config) *gin.Engine {
 		g.GET("/tasks/:g/collect", h.TaskCollect)
 		g.DELETE("/tasks/:g", h.TaskKill)
 		g.POST("/tasks/:g/send", h.Send)
+
+		// 蜂群(swarm)：建群/加成员/管理 + 广场/看板
+		g.GET("/swarms", h.Swarms)
+		g.POST("/swarms", h.SwarmNew)
+		g.GET("/swarms/:n", h.SwarmStatus)
+		g.DELETE("/swarms/:n", h.SwarmArchive)
+		g.POST("/swarms/:n/members", h.SwarmAddMember)
+		g.POST("/swarms/:n/done", h.SwarmDone)
+		g.POST("/swarms/:n/activate", h.SwarmActivate)
+		g.GET("/swarms/:n/feed", h.SwarmFeed)
+		g.POST("/swarms/:n/say", h.SwarmSay)
+		g.GET("/swarms/:n/board", h.SwarmBoard)
+		g.POST("/swarms/:n/task", h.SwarmTaskAdd)
+		g.PATCH("/swarms/:n/task/:id", h.SwarmTaskPatch)
+		g.DELETE("/swarms/:n/task/:id", h.SwarmTaskDelete)
 
 		g.GET("/env", h.Env)
 		g.PUT("/env", h.EnvSet)
@@ -138,10 +154,19 @@ func mountWeb(r *gin.Engine, frontendDir string) {
 	}
 	r.GET("/", serve)
 	r.NoRoute(func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, "/api") {
+		p := c.Request.URL.Path
+		if strings.HasPrefix(p, "/api") {
 			c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"code": "NOT_FOUND"}})
 			return
 		}
-		serve(c) // SPA history 路由回退
+		// public 下的静态文件（logo、favicon、manifest 等）：存在就直接返回
+		if useReact && p != "/" {
+			fp := filepath.Join(frontendDir, filepath.Clean("/"+p))
+			if strings.HasPrefix(fp, frontendDir) && fileExists(fp) {
+				c.File(fp)
+				return
+			}
+		}
+		serve(c) // 否则按 SPA history 路由回退到 index.html
 	})
 }
