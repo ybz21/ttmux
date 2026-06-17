@@ -227,6 +227,16 @@ export default function BrowserView() {
 
   const changeQuality = (v: Quality) => { setQuality(v); localStorage.setItem(QKEY, String(v)) }
 
+  // F12：打开 Chrome 自带 DevTools（经后端反代 /api/browser/cdp/*，直连该 tab 的 CDP）。
+  // https 页面必须用 wss= 参数，否则 DevTools 起 ws:// 连接会被混合内容拦截。
+  const openDevtools = () => {
+    if (!target) { message.warning('没有可调试的标签页'); return }
+    const wsParam = location.protocol === 'https:' ? 'wss' : 'ws'
+    const u = `${location.origin}/api/browser/cdp/devtools/inspector.html`
+      + `?${wsParam}=${location.host}/api/browser/cdp/devtools/page/${target}`
+    window.open(u, `ttmux-devtools-${target}`, 'width=1100,height=720')
+  }
+
   // 把鼠标坐标换算成 CDP 期望的页面 CSS 像素坐标。
   // 关键：<img> 用 object-fit: contain，画面在元素框内居中留黑边，
   // 必须扣掉黑边(letterbox)再按真实显示区缩放，否则点击会整体错位。
@@ -352,6 +362,7 @@ export default function BrowserView() {
           onPressEnter={navigate}
         />
         <Button size="small" onClick={navigate}>前往</Button>
+        <Button size="small" onClick={openDevtools} title="打开调试工具 (F12 / DevTools)">调试</Button>
       </div>
       <style>{`
         .bv-ripple{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;

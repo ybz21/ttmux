@@ -116,7 +116,8 @@ func New(cfg Config) *gin.Engine {
 		g.POST("/browser/tabs/:id/forward", browser.TabForward)   // 前进
 		g.POST("/browser/tabs/:id/reload", browser.TabReload)     // 刷新
 		g.POST("/browser/tabs/:id/activate", browser.TabActivate) // 在 Chrome 里前置
-		g.POST("/browser/tabs/:id/navigate", browser.TabNavigate) // 导航到 URL
+		g.POST("/browser/tabs/:id/navigate", browser.TabNavigate)         // 导航到 URL
+			g.Any("/browser/cdp/*path", browser.DevToolsProxy) // 反代 Chrome 自带 DevTools(F12) + CDP ws
 		g.GET("/stream/status", hub.Status)
 		g.GET("/logs/:name", hub.Logs)
 	}
