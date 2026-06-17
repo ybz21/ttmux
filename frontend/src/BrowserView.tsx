@@ -78,6 +78,22 @@ function cell(text: string, w: number) {
   return <span style={{ display: 'inline-block', width: w, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{text}</span>
 }
 
+// Chrome 的 /json(标签页)顺序不稳定：激活/聚焦/新开都会重排，直接用它每 3s 一刷新
+// tab 就乱跳，新开的还常被排到最前(左侧冒出来)。这里维持一份稳定的客户端顺序：
+// 已有 tab 保持原位(仅更新标题/url)，真正新开的追加到末尾(右侧)，消失的移除。
+function mergeTabs(prev: TabInfo[], incoming: TabInfo[]): TabInfo[] {
+  const byId = new Map(incoming.map((t) => [t.id, t]))
+  const out: TabInfo[] = []
+  for (const p of prev) {            // 1) 旧 tab 按原顺序保留，取最新标题/url
+    const cur = byId.get(p.id)
+    if (cur) { out.push(cur); byId.delete(p.id) }
+  }
+  for (const t of incoming) {        // 2) 新 tab 追加到右侧(按后端相对顺序)
+    if (byId.has(t.id)) out.push(t)
+  }
+  return out
+}
+
 export default function BrowserView() {
   const { message } = AntApp.useApp()
   const imgRef = useRef<HTMLImageElement>(null)
@@ -119,7 +135,7 @@ export default function BrowserView() {
     try {
       const r = await api('GET', '/browser/tabs')
       const list: TabInfo[] = r?.data || []
-      setTabs(list)
+      setTabs((prev) => mergeTabs(prev, list)) // 稳定顺序，避免后端重排导致 tab 乱跳
       // 当前 target 已不存在 → 切到第一个
       setTarget((t) => (list.some((x) => x.id === t) ? t : (list[0]?.id || '')))
     } catch {}
@@ -132,11 +148,13 @@ export default function BrowserView() {
 
   const newTab = async () => {
     try {
+      const known = new Set(tabs.map((t) => t.id)) // 记下创建前的 id，用于定位新开的那个
       await api('POST', '/browser/tabs', { url: 'about:blank' })
       const r = await api('GET', '/browser/tabs')
       const list: TabInfo[] = r?.data || []
-      setTabs(list)
-      if (list.length) setTarget(list[list.length - 1].id) // 切到新建的那个
+      setTabs((prev) => mergeTabs(prev, list))
+      const fresh = list.find((t) => !known.has(t.id)) // 真正新增的(在右侧)，而非后端顺序的末位
+      setTarget(fresh?.id || list[list.length - 1]?.id || '')
     } catch (e: any) { message.error(e.message) }
   }
   const closeTab = async (id: string) => {
