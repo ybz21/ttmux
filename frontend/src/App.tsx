@@ -413,6 +413,16 @@ function TerminalPane(props: {
   const st = active ? statusMap[active] : undefined
   const dot = st === 'connected' ? '#3fb950' : st === 'connecting' ? '#d29922' : '#f85149'
 
+  // 移动端可靠输入：xterm 隐藏 textarea 在软键盘/输入法「合成/预测词」下会把字留在
+  // 合成缓冲里不提交，onData 不触发 → 打完字发不出去。触摸设备改用独立输入框：整行送 PTY。
+  const isTouch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches
+  const [line, setLine] = useState('')
+  const sendRaw = (s: string) => { if (active) termRefs.current[active]?.send(s, true) } // keepFocus：不抢 xterm 焦点 → 软键盘不收起
+  const flushLine = () => { if (line) { sendRaw(line); setLine('') } }                  // 把输入框待发文本先送出（不带回车）
+  const submitLine = () => { sendRaw(line + '\r'); setLine('') }                         // 整行 + 回车
+  const tapKey = (seq: string) => { flushLine(); if (isTouch) sendRaw(seq); else sendKey(seq) } // 控制键：先 flush 待发文本
+  const noBlur = isTouch ? (e: React.MouseEvent) => e.preventDefault() : undefined        // 点按钮不夺走输入框焦点（软键盘保持）
+
   // 文件侧栏（终端视图下也可用）：定位到当前会话的工作目录
   const [showFiles, setShowFiles] = useState(false)
   const [cwd, setCwd] = useState('')
@@ -526,11 +536,26 @@ function TerminalPane(props: {
         )}
       </div>
 
+      {/* 移动端文字输入框：软键盘/输入法在 xterm 里会丢字，这里整行可靠发送到 PTY */}
+      {isTouch && (
+        <div style={{ display: 'flex', gap: 6, padding: '8px 8px 0' }}>
+          <Input
+            value={line}
+            onChange={(e) => setLine(e.target.value)}
+            onPressEnter={(e) => { if ((e.nativeEvent as any).isComposing) return; submitLine() }}
+            placeholder="输入文字，回车 / 发送 → 终端"
+            allowClear
+            autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
+          />
+          <Button type="primary" onMouseDown={noBlur} onClick={submitLine}>发送</Button>
+        </div>
+      )}
+
       {/* 快捷键栏 */}
       <div style={{ display: 'flex', gap: 6, padding: 8, borderTop: '1px solid #30363d', overflowX: 'auto' }}>
-        <Button type="primary" onClick={() => sendKey('\r')}>Enter</Button>
+        <Button type="primary" onMouseDown={noBlur} onClick={() => (isTouch ? submitLine() : sendKey('\r'))}>Enter</Button>
         {KEYS.map(([label, seq]) => (
-          <Button key={label} onClick={() => sendKey(seq)} style={{ flex: '0 0 auto' }}>{label}</Button>
+          <Button key={label} onMouseDown={noBlur} onClick={() => tapKey(seq)} style={{ flex: '0 0 auto' }}>{label}</Button>
         ))}
       </div>
     </div>

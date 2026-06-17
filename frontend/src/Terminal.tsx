@@ -5,7 +5,8 @@ import '@xterm/xterm/css/xterm.css'
 
 export type TermStatus = 'connecting' | 'connected' | 'closed'
 export interface TermHandle {
-  send: (s: string) => void
+  // keepFocus=true：发送但不把焦点抢回 xterm（移动端输入框流程用，避免软键盘被收起）
+  send: (s: string, keepFocus?: boolean) => void
   fit: () => void
   copy: () => boolean
   reconnect: () => void
@@ -81,7 +82,7 @@ const Term = forwardRef<TermHandle, {
   }
 
   useImperativeHandle(ref, () => ({
-    send: (s) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(s); termRef.current?.focus() },
+    send: (s, keepFocus) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(s); if (!keepFocus) termRef.current?.focus() },
     fit: () => sendResize(),
     copy: () => {
       const sel = termRef.current?.getSelection() || ''
