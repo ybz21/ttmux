@@ -301,8 +301,12 @@ case "$cmd" in
                 _swarm_sql "$@"
                 ;;
             say)
-                [[ $# -ge 2 ]] || { msg_err '用法: ttmux swarm say <群> [--as 成员] [--kind 类型] <消息>'; exit 1; }
+                [[ $# -ge 2 ]] || { msg_err '用法: ttmux swarm say <群> [--as 成员] [--to 目标] [--kind 类型] <消息>'; exit 1; }
                 _plaza_say "$@"
+                ;;
+            listen)
+                [[ $# -ge 1 ]] || { msg_err "用法: ttmux swarm listen <群> [--as master|成员] [--once] [--mentions]"; exit 1; }
+                _swarm_listen "$@"
                 ;;
             feed)
                 [[ $# -ge 1 ]] || { msg_err "用法: ttmux swarm feed <群> [-n N] [--from 成员] [--kind 类型] [--since id] [--json]"; exit 1; }
@@ -330,7 +334,7 @@ case "$cmd" in
                 ;;
             *)
                 msg_err "未知子命令: swarm ${subcmd}"
-                echo -e "   可用: new, add, ls, status, activate, collect, adopt, done, say, feed, watch, board, task, sql, archive, rm"
+                echo -e "   可用: new, add, ls, status, activate, collect, adopt, done, say, listen, feed, watch, board, task, sql, archive, rm"
                 exit 1
                 ;;
         esac

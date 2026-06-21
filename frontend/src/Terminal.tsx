@@ -9,6 +9,7 @@ export interface TermHandle {
   send: (s: string, keepFocus?: boolean) => void
   fit: () => void
   copy: () => boolean
+  selection: () => string
   reconnect: () => void
   scroll: (lines: number) => void
   toBottom: () => void
@@ -45,7 +46,8 @@ const Term = forwardRef<TermHandle, {
   fontSize: number
   active: boolean
   onStatus?: (s: TermStatus) => void
-}>(function Term({ name, fontSize, active, onStatus }, ref) {
+  onContextMenu?: (e: { x: number; y: number; selection: string }) => void
+}>(function Term({ name, fontSize, active, onStatus, onContextMenu }, ref) {
   const elRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal>()
   const fitRef = useRef<FitAddon>()
@@ -97,6 +99,7 @@ const Term = forwardRef<TermHandle, {
       if (sel) copyText(sel)
       return !!sel
     },
+    selection: () => termRef.current?.getSelection() || '',
     reconnect: () => { try { wsRef.current?.close() } catch {} }, // onclose 触发自动重连
     scroll: (lines) => sendScroll(lines < 0 ? 'up' : 'down', Math.abs(lines)),
     toBottom: () => sendScroll('bottom', 0),
@@ -148,9 +151,12 @@ const Term = forwardRef<TermHandle, {
       sendScroll(e.deltaY < 0 ? 'up' : 'down', n)
       e.preventDefault(); e.stopPropagation()
     }
-    // 屏蔽 Chrome 原生右键菜单：右键交给 tmux（mouse on 时会弹 tmux 自己的菜单），
-    // 否则两套菜单会同时冒出来。
-    const onCtx = (e: MouseEvent) => e.preventDefault()
+    // 右键改为 Roam 菜单：有选区时优先复制；无选区时提供粘贴/重连/tmux 常用动作。
+    const onCtx = (e: MouseEvent) => {
+      e.preventDefault()
+      const sel = termRef.current?.getSelection() || ''
+      onContextMenu?.({ x: e.clientX, y: e.clientY, selection: sel })
+    }
     el.addEventListener('touchstart', onTS, { passive: true, capture: true })
     el.addEventListener('touchmove', onTM, { passive: false, capture: true })
     el.addEventListener('wheel', onWheel, { passive: false, capture: true })

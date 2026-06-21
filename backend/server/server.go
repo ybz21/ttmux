@@ -68,9 +68,10 @@ func New(cfg Config) *gin.Engine {
 		g.GET("/info", h.Info)
 
 		g.GET("/fs", h.FS)
-		g.GET("/files", h.Files)      // 文件侧栏：列目录
-		g.GET("/file", h.File)        // 文件侧栏：读文件
-		g.GET("/file/raw", h.FileRaw) // 文件侧栏：原始字节（图片预览 / ?dl=1 下载）
+		g.GET("/files", h.Files)              // 文件侧栏：列目录
+		g.GET("/file", h.File)                // 文件侧栏：读文件
+		g.GET("/file/raw", h.FileRaw)         // 文件侧栏：原始字节（图片预览 / ?dl=1 下载）
+		g.GET("/file/preview", h.FilePreview) // 文件侧栏：Office 转 PDF 预览
 		g.GET("/file/stat", h.FileStat)
 		g.DELETE("/file", h.FileDelete)
 		g.POST("/upload", h.Upload) // 上传文件到指定目录（拖拽到对话框 / 文件侧栏）

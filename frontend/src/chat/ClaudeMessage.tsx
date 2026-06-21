@@ -2,7 +2,7 @@
 // 工具结果按 tool_use_id 折叠在对应调用之下。
 import { memo, useState } from 'react'
 import Markdown from '../Markdown'
-import { CodeBox, Collapsible, Diff, MONO, fmtTs, ToolResult } from './blocks'
+import { CodeBox, Collapsible, Diff, MONO, copyText, fmtTs, ToolResult } from './blocks'
 import type { Block, Msg } from './types'
 
 function parseInput(input?: string): any {
@@ -82,6 +82,13 @@ function ToolUse({ b, result }: { b: Block; result?: Block }) {
   )
 }
 
+function messageText(m: Msg): string {
+  return m.blocks.map((b) => {
+    if (b.kind === 'tool_use') return b.input || ''
+    return b.text || ''
+  }).filter(Boolean).join('\n\n')
+}
+
 export const ClaudeBubble = memo(function ClaudeBubble({ m, results }: { m: Msg; results: Record<string, Block> }) {
   const isUser = m.role === 'user'
   const isTool = m.role === 'tool'
@@ -89,7 +96,7 @@ export const ClaudeBubble = memo(function ClaudeBubble({ m, results }: { m: Msg;
   const bg = isUser ? '#1f6feb' : isTool ? 'transparent' : 'var(--bg-container)'
   const border = isUser || isTool ? 'none' : '1px solid var(--border)'
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: align, margin: '6px 0', gap: 2 }}>
+    <div className="cc-msg" style={{ display: 'flex', flexDirection: 'column', alignItems: align, margin: '6px 0', gap: 2 }}>
       <div style={{ maxWidth: isUser ? '86%' : '100%', width: isUser ? 'auto' : '100%', background: bg, border, borderRadius: 12, padding: isTool ? 0 : '8px 12px', color: isUser ? '#fff' : 'var(--text-bright)', display: 'flex', flexDirection: 'column', gap: 6 }}>
         {m.blocks.map((b, i) => {
           if (b.kind === 'text') return <Markdown key={i} accent={isUser ? '#cfe1ff' : '#58a6ff'}>{b.text || ''}</Markdown>
@@ -100,7 +107,12 @@ export const ClaudeBubble = memo(function ClaudeBubble({ m, results }: { m: Msg;
           return null
         })}
       </div>
-      {m.ts && !isTool && <span style={{ fontSize: 10, color: 'var(--text-dimmer)', padding: '0 4px' }}>{fmtTs(m.ts)}</span>}
+      {!isTool && (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 10, color: 'var(--text-dimmer)', padding: '0 4px' }}>
+          {m.ts && fmtTs(m.ts)}
+          <button className="cc-msg-copy" onClick={() => copyText(messageText(m))}>复制</button>
+        </span>
+      )}
     </div>
   )
 })

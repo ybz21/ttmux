@@ -29,9 +29,9 @@ _ttmux_completions() {
             COMPREPLY=($(compgen -W "spawn status send collect kill" -- "$cur"))
             return ;;
         swarm)
-            COMPREPLY=($(compgen -W "new add ls status activate collect adopt done say feed watch board task sql archive rm" -- "$cur"))
+            COMPREPLY=($(compgen -W "new add ls status activate collect adopt done say listen feed watch board task sql archive rm" -- "$cur"))
             return ;;
-        adopt|activate|done|archive|status|collect|say|feed|watch|sql|add|board)
+        adopt|activate|done|archive|status|collect|say|listen|feed|watch|sql|add|board)
             local swarms
             swarms=$(sqlite3 ~/.ttmux/meta.db "SELECT name FROM swarms;" 2>/dev/null)
             COMPREPLY=($(compgen -W "$swarms" -- "$cur"))
@@ -62,4 +62,3 @@ COMP
     msg_ok "Tab 补全已安装"
     msg_info "运行 ${cyan}source ~/.bashrc${reset} 或重开终端生效"
 }
-

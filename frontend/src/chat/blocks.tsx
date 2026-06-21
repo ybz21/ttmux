@@ -13,7 +13,7 @@ export function fmtTs(ts?: string): string {
 }
 
 // 跨 http（局域网非安全上下文）也能用的复制
-function copyText(s: string) {
+export function copyText(s: string) {
   if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(s).catch(() => {}); return }
   try {
     const ta = document.createElement('textarea')

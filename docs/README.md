@@ -11,6 +11,7 @@
 
 - [蜂群编排设计](./design/蜂群编排设计.md) — swarm / member / master / 依赖门控
 - [蜂群广场与看板设计](./design/蜂群广场与看板设计.md) — Plaza（消息流）+ Board（看板）
+- [蜂群广场监听循环设计](./design/蜂群广场监听循环设计.md) — master/worker 持续监听 human 指令与广场消息
 - [蜂群 Web 接入设计](./design/蜂群%20Web%20接入设计.md) — 蜂群在 Web 端的映射
 - [蜂群成员启动与提示词模板设计](./design/蜂群成员启动与提示词模板设计.md) — claude/codex 引擎 · master/worker 角色 · 提示词模板（Go text/template）
 - [web/](./design/web/) — Web 控制台完整设计（总览 / 后端 / 认证 / 前端 / 逐页面 / 路线图）

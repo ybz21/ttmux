@@ -1,9 +1,10 @@
 // 文件侧栏 —— 在 Claude / Codex 对话页右侧浏览工作目录、查看文件内容（类似 codex 右侧边栏）。
 // 单层可导航列表：目录在前可进入、↑ 回上级、点文件在弹层里查看正文。
-import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from 'react'
-import { Button, Modal, Space, Spin, App as AntApp, Tooltip } from 'antd'
+import { type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { AutoComplete, Button, Input, Modal, Space, Spin, App as AntApp, Tooltip } from 'antd'
 import { api, upload } from './api'
 import Markdown from './Markdown'
+import { DocxFilePreview, ExcelFilePreview, PptxFilePreview } from './OfficePreviewers'
 
 const IMG_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'svg']
 const MD_EXT = ['md', 'markdown', 'mdx']
@@ -18,6 +19,10 @@ const CODE_LANG: Record<string, string> = {
 function extOf(path: string): string {
   const m = path.toLowerCase().match(/\.([a-z0-9]+)$/)
   return m ? m[1] : ''
+}
+
+function fileNameOf(path: string): string {
+  return path.split('/').pop() || 'download'
 }
 
 interface Entry { name: string; dir: boolean; size: number }
@@ -47,6 +52,10 @@ function normalizePath(path: string): string {
     else parts.push(part)
   }
   return (abs ? '/' : '') + parts.join('/')
+}
+
+function displayPath(path: string): string {
+  return path || '/'
 }
 
 function stripHashQuery(ref: string): string {
@@ -150,6 +159,17 @@ const FileTypeIcon = ({ name }: { name: string }) => {
     }}>{entry.icon}</span>
   )
 }
+const PathOption = ({ kind, path, name, dir }: { kind: string; path: string; name?: string; dir?: boolean }) => (
+  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 260, maxWidth: 560 }}>
+    <span style={{ color: dir ? 'var(--text-bright)' : 'var(--text-dimmer)', width: 20, display: 'inline-flex', justifyContent: 'center' }}>
+      {dir ? <FolderIcon /> : name ? <FileTypeIcon name={name} /> : <FolderIcon />}
+    </span>
+    <span style={{ color: 'var(--text-bright)', fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      {name || path}
+    </span>
+    <span style={{ color: 'var(--text-dimmer)', fontSize: 11, flex: '0 0 auto' }}>{kind}</span>
+  </div>
+)
 const FolderUpIcon = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M12 16V10" /><path d="m9 13 3-3 3 3" /></svg>
 )
@@ -173,6 +193,50 @@ const IconButton = ({ title, children, danger, onClick, disabled, width = 24 }: 
     </Button>
   </Tooltip>
 )
+
+function OfficePreview({ name, previewUrl, rawUrl, downloadUrl, downloadName, height }: { name: string; previewUrl: string; rawUrl: string; downloadUrl: string; downloadName: string; height: string }) {
+  const [url, setUrl] = useState('')
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    let stop = false
+    let objectUrl = ''
+    setUrl('')
+    setErr('')
+    fetch(previewUrl).then(async (r) => {
+      if (!r.ok) {
+        const data = await r.json().catch(() => null)
+        throw new Error(data?.error?.message || data?.error?.code || `HTTP ${r.status}`)
+      }
+      return r.blob()
+    }).then((blob) => {
+      if (stop) return
+      objectUrl = URL.createObjectURL(blob)
+      setUrl(objectUrl)
+    }).catch((e) => {
+      if (!stop) setErr(e.message || 'Office 预览生成失败')
+    })
+    return () => {
+      stop = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [previewUrl])
+
+  if (err) {
+    return (
+      <div style={{ minHeight: height, padding: 18, color: 'var(--text-dim)', lineHeight: 1.7 }}>
+        <div style={{ color: 'var(--text-bright)', fontWeight: 700, marginBottom: 6 }}>{name}</div>
+        <div>{err}</div>
+        <div style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Button size="small" type="primary" href={downloadUrl} download={downloadName}>下载文件</Button>
+          <Button size="small" href={rawUrl} target="_blank">打开原始</Button>
+        </div>
+      </div>
+    )
+  }
+  if (!url) return <div style={{ height, display: 'grid', placeItems: 'center' }}><Spin /></div>
+  return <iframe title={name} src={url} style={{ width: '100%', height, border: 0, background: '#fff' }} />
+}
+
 function Viewer({
   path,
   accent,
@@ -192,10 +256,17 @@ function Viewer({
   const isImg = IMG_EXT.includes(ext)
   const isMd = MD_EXT.includes(ext)
   const isPdf = ext === 'pdf'
-  const isOffice = ['doc', 'docx', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'rtf'].includes(ext)
+  const isOffice = ['doc', 'docx', 'odt', 'rtf', 'xls', 'xlsx', 'xlsm', 'ods', 'ppt', 'pptx', 'odp'].includes(ext)
+  const isDocxPreview = ext === 'docx'
+  const isExcelPreview = ['xls', 'xlsx', 'xlsm', 'ods'].includes(ext)
+  const isPptxPreview = ext === 'pptx'
   const isSheetText = ['csv', 'tsv'].includes(ext)
   const codeLang = codeLangOf(path)
   const rawUrl = `/api/file/raw?path=${encodeURIComponent(path)}`
+  const previewUrl = `/api/file/preview?path=${encodeURIComponent(path)}`
+  const downloadUrl = `${rawUrl}&dl=1`
+  const downloadName = fileNameOf(path)
+  const previewHeight = inline ? '100%' : '74vh'
   const [data, setData] = useState<any>(null)
   const [err, setErr] = useState('')
   const [source, setSource] = useState(false) // markdown：源码/渲染切换
@@ -208,7 +279,7 @@ function Viewer({
     api('GET', `/file?path=${encodeURIComponent(path)}`).then((r) => setData(r.data)).catch((e) => setErr(e.message))
   }, [path, isImg, isPdf, isOffice])
 
-  const name = path.split('/').pop()
+  const name = fileNameOf(path)
   const copyPath = async () => {
     try {
       await navigator.clipboard.writeText(path)
@@ -218,7 +289,7 @@ function Viewer({
     }
   }
   const codePre = (text: string) => (
-    <pre style={{ margin: 0, whiteSpace: 'pre', overflow: 'auto', maxHeight: '70vh', background: 'var(--bg-base)', padding: 12, borderRadius: 8, fontFamily: 'ui-monospace, monospace', fontSize: 12.5, lineHeight: 1.5, color: '#c9d1d9' }}>{text}</pre>
+    <pre style={{ margin: 0, whiteSpace: 'pre', overflow: 'auto', height: previewHeight, background: 'var(--bg-base)', padding: 12, borderRadius: 8, fontFamily: 'ui-monospace, monospace', fontSize: 12.5, lineHeight: 1.5, color: '#c9d1d9' }}>{text}</pre>
   )
   const resolvePreviewHref = (href: string, kind: 'link' | 'image') => {
     const local = localPathFromRef(path, href)
@@ -233,13 +304,13 @@ function Viewer({
     onOpenPath(local)
   }
   const previewShell = (title: string, body: React.ReactNode) => (
-    <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-base)' }}>
+    <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-base)', height: inline ? '100%' : undefined, display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-dim)', fontSize: 12 }}>
         <FileTypeIcon name={path} />
         <span>{title}</span>
         {data?.truncated && <span style={{ marginLeft: 'auto', color: '#d29922' }}>仅显示前 512 KB</span>}
       </div>
-      {body}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>{body}</div>
     </div>
   )
   const csvTable = (text: string, sep: ',' | '\t') => {
@@ -247,7 +318,7 @@ function Viewer({
     const head = rows[0] || []
     const body = rows.slice(1)
     return previewShell(`${sep === ',' ? 'CSV' : 'TSV'} 表格预览 · 最多 80 行 / 12 列`, (
-      <div style={{ maxHeight: '70vh', overflow: 'auto' }}>
+      <div style={{ height: previewHeight, overflow: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>{head.length > 0 && <tr>{head.map((c, i) => <th key={i} style={cellStyle(true)}>{c || `列 ${i + 1}`}</th>)}</tr>}</thead>
           <tbody>{body.map((r, i) => <tr key={i}>{head.map((_, j) => <td key={j} style={cellStyle(false)}>{r[j] || ''}</td>)}</tr>)}</tbody>
@@ -269,7 +340,7 @@ function Viewer({
         <Button size="small" onClick={() => setAgentPick(true)}>在 Agent 中打开</Button>
       )}
       <Button size="small" onClick={copyPath}>复制路径</Button>
-      <Button size="small" href={`${rawUrl}&dl=1`}>下载</Button>
+      <Button size="small" href={downloadUrl} download={downloadName}>下载</Button>
       <a href={rawUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--text-dim)', fontSize: 12 }}>原始</a>
       {inline && <IconButton title="关闭预览" onClick={onClose}><CloseIcon /></IconButton>}
     </div>
@@ -277,18 +348,26 @@ function Viewer({
   const bodyNode = (
     <>
       {isImg ? (
-        <div style={{ textAlign: 'center', background: 'var(--bg-base)', borderRadius: 8, padding: 12 }}>
-          <img src={rawUrl} alt={name} style={{ maxWidth: '100%', maxHeight: inline ? 'calc(100vh - 160px)' : '74vh', objectFit: 'contain' }} />
+        <div style={{ height: '100%', textAlign: 'center', background: 'var(--bg-base)', borderRadius: 8, padding: 12, display: 'grid', placeItems: 'center' }}>
+          <img src={rawUrl} alt={name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
         </div>
       ) : isPdf ? (
-        previewShell('PDF 内嵌预览', <iframe title={name} src={rawUrl} style={{ width: '100%', height: inline ? 'calc(100vh - 170px)' : '74vh', border: 0, background: '#fff' }} />)
+        previewShell('PDF 内嵌预览', <iframe title={name} src={rawUrl} style={{ width: '100%', height: '100%', border: 0, background: '#fff' }} />)
+      ) : isDocxPreview ? (
+        previewShell('Word 预览', <DocxFilePreview src={rawUrl} name={name} downloadUrl={downloadUrl} />)
+      ) : isExcelPreview ? (
+        previewShell('Excel 预览', <ExcelFilePreview src={rawUrl} name={name} downloadUrl={downloadUrl} />)
+      ) : isPptxPreview ? (
+        previewShell('PPT 预览', <PptxFilePreview src={rawUrl} name={name} downloadUrl={downloadUrl} />)
       ) : isOffice ? (
-        previewShell('Office 文件预览', (
-          <div style={{ padding: 18, color: 'var(--text-dim)', lineHeight: 1.7 }}>
-            <div style={{ color: 'var(--text-bright)', fontWeight: 700, marginBottom: 6 }}>{name}</div>
-            <div>浏览器不能稳定直接渲染此类 Office 二进制文件。请下载后用本地 Office/WPS/LibreOffice 打开，或点“原始”交给浏览器处理。</div>
-            <div style={{ marginTop: 14, display: 'flex', gap: 8 }}>
-              <Button size="small" type="primary" href={`${rawUrl}&dl=1`}>下载文件</Button>
+        previewShell('Office 转 PDF 预览', (
+          <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ flex: 1, minHeight: 0 }}>
+              <OfficePreview name={name} previewUrl={previewUrl} rawUrl={rawUrl} downloadUrl={downloadUrl} downloadName={downloadName} height="100%" />
+            </div>
+            <div style={{ padding: '8px 10px', borderTop: '1px solid var(--border-subtle)', color: 'var(--text-dim)', fontSize: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span>预览依赖本机 LibreOffice/soffice 转换。</span>
+              <Button size="small" type="primary" href={downloadUrl} download={downloadName}>下载文件</Button>
               <Button size="small" href={rawUrl} target="_blank">打开原始</Button>
             </div>
           </div>
@@ -305,11 +384,11 @@ function Viewer({
               {isSheetText
                 ? csvTable(data.content, ext === 'tsv' ? '\t' : ',')
                 : isMd && !source
-                  ? <div style={{ maxHeight: '70vh', overflow: 'auto' }}><Markdown accent={accent} resolveHref={resolvePreviewHref} onLinkClick={openPreviewLink}>{data.content}</Markdown></div>
+                  ? <div style={{ height: previewHeight, overflow: 'auto' }}><Markdown accent={accent} resolveHref={resolvePreviewHref} onLinkClick={openPreviewLink}>{data.content}</Markdown></div>
                   : ext === 'json'
-                    ? previewShell('JSON 结构预览', <div style={{ maxHeight: '70vh', overflow: 'auto', padding: 12 }}><Markdown accent={accent}>{fence('json', formatJSON(data.content))}</Markdown></div>)
+                    ? previewShell('JSON 结构预览', <div style={{ height: previewHeight, overflow: 'auto', padding: 12 }}><Markdown accent={accent}>{fence('json', formatJSON(data.content))}</Markdown></div>)
                     : codeLang
-                      ? previewShell(`${codeLang.toUpperCase()} 代码预览`, <div style={{ maxHeight: '70vh', overflow: 'auto', padding: 12 }}><Markdown accent={accent}>{fence(codeLang, data.content)}</Markdown></div>)
+                      ? previewShell(`${codeLang.toUpperCase()} 代码预览`, <div style={{ height: previewHeight, overflow: 'auto', padding: 12 }}><Markdown accent={accent}>{fence(codeLang, data.content)}</Markdown></div>)
                       : codePre(data.content)}
               {data.truncated && <div style={{ color: '#d29922', fontSize: 12, marginTop: 6 }}>⚠ 文件较大，仅显示前 512 KB</div>}
             </>
@@ -334,7 +413,7 @@ function Viewer({
     return (
       <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: '#070b10' }}>
         <div style={{ padding: '9px 12px', borderBottom: '1px solid var(--border-subtle)' }}>{titleNode}</div>
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12 }}>{bodyNode}</div>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', padding: 12 }}>{bodyNode}</div>
       </div>
     )
   }
@@ -382,6 +461,7 @@ export default function FileBrowser({
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
   const [view, setView] = useState<string | null>(null)
+  const [pathDraft, setPathDraft] = useState('')
   const [tick, setTick] = useState(0) // 上传后强制重载当前目录
   const [uploading, setUploading] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -405,6 +485,10 @@ export default function FileBrowser({
   const cur = data?.path || path
   const refresh = () => setTick((t) => t + 1)
   const goUp = () => { if (data && canUp) setPath(data.parent) }
+
+  useEffect(() => {
+    setPathDraft(displayPath(cur))
+  }, [cur])
 
   const doUpload = async (files: FileList | File[]) => {
     if (!files || !files.length || !cur || uploading) return
@@ -454,8 +538,39 @@ export default function FileBrowser({
     }
   }
 
+  const resolveTypedPath = (value: string): string => {
+    const raw = value.trim()
+    if (!raw) return cur || '/'
+    if (raw.startsWith('/')) return normalizePath(raw)
+    return normalizePath(joinPath(cur || '/', raw))
+  }
+
+  const submitTypedPath = (value = pathDraft) => {
+    const target = resolveTypedPath(value)
+    setPathDraft(displayPath(target))
+    openPath(target)
+  }
+
+  const pathOptions = useMemo(() => {
+    const q = pathDraft.trim().toLowerCase()
+    const list: { value: string; label: ReactNode }[] = []
+    const add = (value: string, label: ReactNode) => {
+      if (!value || list.some((x) => x.value === value)) return
+      if (q && !value.toLowerCase().includes(q) && !fileNameOf(value).toLowerCase().includes(q)) return
+      list.push({ value, label })
+    }
+    if (cur) add(cur, <PathOption kind="当前位置" path={cur} />)
+    if (data?.parent && data.parent !== cur) add(data.parent, <PathOption kind="上级目录" path={data.parent} />)
+    if (dir && dir !== cur) add(dir, <PathOption kind="工作目录" path={dir} />)
+    for (const e of data?.entries || []) {
+      const full = joinPath(cur || '/', e.name)
+      add(full, <PathOption kind={e.dir ? '目录' : '文件'} path={full} name={e.name} dir={e.dir} />)
+    }
+    return list.slice(0, 24)
+  }, [cur, data?.entries, data?.parent, dir, pathDraft])
+
   const browserPane = (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#0a0e13', borderLeft: '1px solid var(--border-subtle)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#0a0e13', borderLeft: '1px solid var(--border-subtle)', position: 'relative', overflow: 'hidden' }}>
       <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--border-subtle)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
           <span style={{ color: accent }}><FolderIcon /></span>
@@ -471,7 +586,30 @@ export default function FileBrowser({
           <IconButton title="上传到当前目录" disabled={uploading || !cur} onClick={() => fileRef.current?.click()}>{uploading ? '…' : <UploadIcon />}</IconButton>
         </div>
       </div>
-      <div title={cur} style={{ padding: '4px 10px', color: 'var(--text-dim)', fontSize: 11.5, fontFamily: 'ui-monospace, monospace', borderBottom: '1px solid var(--bg-container)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', direction: 'rtl', textAlign: 'left' }}>{cur || '…'}</div>
+      <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--bg-container)' }}>
+        <AutoComplete
+          value={pathDraft}
+          options={pathOptions}
+          onChange={setPathDraft}
+          onSelect={(v) => submitTypedPath(v)}
+          style={{ width: '100%' }}
+          popupMatchSelectWidth={false}
+          filterOption={false}
+        >
+          <Input.Search
+            size="small"
+            allowClear
+            enterButton="打开"
+            onSearch={(v) => submitTypedPath(v)}
+            onPressEnter={(e) => submitTypedPath((e.target as HTMLInputElement).value)}
+            placeholder="输入 /绝对路径 或 ./../相对路径"
+            style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}
+          />
+        </AutoComplete>
+        <div style={{ marginTop: 4, color: 'var(--text-dimmer)', fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          回车打开 · 当前目录内容会自动提示
+        </div>
+      </div>
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 0' }}>
         {loading && <div style={{ display: 'flex', justifyContent: 'center', padding: 16 }}><Spin size="small" /></div>}
         {err && <div style={{ color: '#f85149', fontSize: 12, padding: '6px 10px' }}>{err}</div>}
@@ -511,7 +649,7 @@ export default function FileBrowser({
               <>
                 <span data-file-action>
                   <Tooltip title="下载">
-                    <Button type="text" size="small" href={`/api/file/raw?path=${encodeURIComponent(joinPath(cur, e.name))}&dl=1`}
+                    <Button type="text" size="small" href={`/api/file/raw?path=${encodeURIComponent(joinPath(cur, e.name))}&dl=1`} download={e.name}
                       style={{ width: 24, height: 24, minWidth: 24, padding: 0, color: 'var(--text-dim)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><DownloadIcon /></Button>
                   </Tooltip>
                 </span>
@@ -521,7 +659,11 @@ export default function FileBrowser({
         ))}
         {data && data.entries.length === 0 && <div style={{ color: 'var(--text-dimmer)', fontSize: 12, padding: '6px 10px' }}>空目录</div>}
       </div>
-      {layout === 'sidebar' && view && <Viewer path={view} accent={accent} onClose={() => setView(null)} onOpenPath={openPath} />}
+      {layout === 'sidebar' && view && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 5, background: '#070b10' }}>
+          <Viewer path={view} accent={accent} inline onClose={() => setView(null)} onOpenPath={openPath} />
+        </div>
+      )}
     </div>
   )
 

@@ -49,14 +49,15 @@ _plaza_render_rows() {
     done
 }
 
-# ttmux swarm say <群> [--as <成员>] [--kind <类型>] [--re <id>] <消息...>
+# ttmux swarm say <群> [--as <成员>] [--to <master|human|all|成员>] [--kind <类型>] [--re <id>] <消息...>
 _plaza_say() {
     local swarm="$1"; shift || true
     if ! _swarm_exists "$swarm"; then msg_err "蜂群不存在: ${swarm}"; return 1; fi
-    local as="" kind="note" re="" parts=()
+    local as="" to="" kind="note" re="" parts=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --as)   as="$2"; shift 2 ;;
+            --to)   to="$2"; shift 2 ;;
             --kind) kind="$2"; shift 2 ;;
             --re)   re="$2"; shift 2 ;;
             *)      parts+=("$1"); shift ;;
@@ -64,12 +65,18 @@ _plaza_say() {
     done
     local text="${parts[*]}"
     [[ -n "$text" ]] || { msg_err "消息不能为空"; return 1; }
+    if [[ -n "$to" ]]; then
+        # @xx 是广场定向提及；--to 只是语法糖，底层仍存原始文本，便于兼容旧库。
+        if [[ ! "$text" =~ (^|[[:space:]])@${to}($|[[:space:][:punct:]]) ]]; then
+            text="@${to} ${text}"
+        fi
+    fi
     local author="$as"
     [[ -n "$author" ]] || author=$(_plaza_author "$swarm")
     local reval="NULL"; [[ "$re" =~ ^[0-9]+$ ]] && reval="$re"
     local db id; db=$(_swarm_db_of "$swarm") || return 1
     # 同一连接内 INSERT + 取自增 id（last_insert_rowid 按连接，分两次调用会拿到 0）
-    id=$(sqlite3 "$db" "INSERT INTO posts(ts,author,kind,re,text)
+    id=$(sqlite3 -cmd ".timeout 5000" "$db" "INSERT INTO posts(ts,author,kind,re,text)
         VALUES(datetime('now','localtime'),'$(_sqe "$author")','$(_sqe "$kind")',${reval},'$(_sqe "$text")');
         SELECT last_insert_rowid();")
     msg_ok "#${id} 已发布 ${dim}(${author}/${kind})${reset}"

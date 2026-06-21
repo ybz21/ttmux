@@ -43,7 +43,7 @@ _board_add() {
     _board_col_valid "$col" || { msg_err "列只能是: ${_BOARD_COLS}"; return 1; }
     local db id; db=$(_swarm_db_of "$swarm") || return 1
     id=$(_board_next_id "$db")
-    sqlite3 "$db" "INSERT INTO cards(id,title,descr,assignee,col,deps,created,updated)
+    sqlite3 -cmd ".timeout 5000" "$db" "INSERT INTO cards(id,title,descr,assignee,col,deps,created,updated)
         VALUES('$(_sqe "$id")','$(_sqe "$title")','$(_sqe "$desc")','$(_sqe "$assignee")','$(_sqe "$col")','$(_sqe "$deps")',
                datetime('now','localtime'),datetime('now','localtime'));"
     echo "$id"
@@ -57,7 +57,7 @@ _board_assign() {
     [[ -n "$cid" && -n "$who" ]] || { msg_err "用法: ttmux swarm task assign <群> <卡id> <成员>"; return 1; }
     local db; db=$(_swarm_db_of "$swarm") || return 1
     _board_card_exists "$db" "$cid" || { msg_err "卡片不存在: ${cid}"; return 1; }
-    sqlite3 "$db" "UPDATE cards SET assignee='$(_sqe "$who")',
+    sqlite3 -cmd ".timeout 5000" "$db" "UPDATE cards SET assignee='$(_sqe "$who")',
         col=CASE WHEN col='backlog' THEN 'assigned' ELSE col END,
         updated=datetime('now','localtime') WHERE id='$(_sqe "$cid")';"
     msg_ok "${bold}${cid}${reset} ${cyan}→ ${who}${reset}  ${dim}[已派]${reset}"
@@ -72,7 +72,7 @@ _board_move() {
     local db; db=$(_swarm_db_of "$swarm") || return 1
     _board_card_exists "$db" "$cid" || { msg_err "卡片不存在: ${cid}"; return 1; }
     local old; old=$(_board_card_col "$db" "$cid")
-    sqlite3 "$db" "UPDATE cards SET col='$(_sqe "$col")', updated=datetime('now','localtime') WHERE id='$(_sqe "$cid")';"
+    sqlite3 -cmd ".timeout 5000" "$db" "UPDATE cards SET col='$(_sqe "$col")', updated=datetime('now','localtime') WHERE id='$(_sqe "$cid")';"
     msg_ok "${bold}${cid}${reset}  ${dim}[${old} → ${col}]${reset}"
 }
 
@@ -85,7 +85,7 @@ _board_rm() {
     [[ -n "$cid" ]] || { msg_err "用法: ttmux swarm task rm <群> <卡id>"; return 1; }
     local db; db=$(_swarm_db_of "$swarm") || return 1
     _board_card_exists "$db" "$cid" || { msg_err "卡片不存在: ${cid}"; return 1; }
-    sqlite3 "$db" "DELETE FROM cards WHERE id='$(_sqe "$cid")';"
+    sqlite3 -cmd ".timeout 5000" "$db" "DELETE FROM cards WHERE id='$(_sqe "$cid")';"
     msg_ok "卡片 ${bold}${cid}${reset} 已删除"
 }
 

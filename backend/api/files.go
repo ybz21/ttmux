@@ -4,13 +4,18 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -101,10 +106,119 @@ func (a *API) FileRaw(c *gin.Context) {
 		return
 	}
 	if c.Query("dl") != "" { // 强制下载（附件），带原文件名
-		c.FileAttachment(p, filepath.Base(p))
+		serveAttachment(c, p, filepath.Base(p))
 		return
 	}
 	c.File(p)
+}
+
+var officePreviewExt = map[string]bool{
+	".doc": true, ".docx": true, ".odt": true, ".rtf": true,
+	".xls": true, ".xlsx": true, ".xlsm": true, ".ods": true,
+	".ppt": true, ".pptx": true, ".odp": true,
+}
+
+// FilePreview GET /file/preview?path=<office-file> —— 使用本机 LibreOffice/soffice 转成 PDF 后内嵌预览。
+func (a *API) FilePreview(c *gin.Context) {
+	p := filepath.Clean(c.Query("path"))
+	if p == "" || !filepath.IsAbs(p) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "BAD_PATH"}})
+		return
+	}
+	info, err := os.Stat(p)
+	if err != nil || info.IsDir() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "NOT_FILE"}})
+		return
+	}
+	if !officePreviewExt[strings.ToLower(filepath.Ext(p))] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "UNSUPPORTED_PREVIEW", "message": "此文件类型不支持 Office 预览"}})
+		return
+	}
+	soffice := findSoffice()
+	if soffice == "" {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": gin.H{"code": "PREVIEW_UNAVAILABLE", "message": "未安装 LibreOffice/soffice，无法生成 Office 预览"}})
+		return
+	}
+	tmp, err := os.MkdirTemp("", "ttmux-office-preview-*")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"code": "PREVIEW_ERROR", "message": err.Error()}})
+		return
+	}
+	defer os.RemoveAll(tmp)
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 45*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, soffice, "--headless", "--nologo", "--nofirststartwizard", "--convert-to", "pdf", "--outdir", tmp, p)
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		c.JSON(http.StatusGatewayTimeout, gin.H{"error": gin.H{"code": "PREVIEW_TIMEOUT", "message": "Office 预览转换超时"}})
+		return
+	}
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"code": "PREVIEW_ERROR", "message": msg}})
+		return
+	}
+	pdfs, _ := filepath.Glob(filepath.Join(tmp, "*.pdf"))
+	if len(pdfs) == 0 {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"code": "PREVIEW_ERROR", "message": "转换完成但未生成 PDF"}})
+		return
+	}
+	c.Header("Content-Type", "application/pdf")
+	c.Header("Content-Disposition", contentDisposition("inline", strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))+".pdf"))
+	c.File(pdfs[0])
+}
+
+func findSoffice() string {
+	for _, name := range []string{"libreoffice", "soffice"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+func serveAttachment(c *gin.Context, path, filename string) {
+	c.Header("Content-Disposition", contentDisposition("attachment", filename))
+	if ct := mime.TypeByExtension(filepath.Ext(filename)); ct != "" {
+		c.Header("Content-Type", ct)
+	}
+	c.File(path)
+}
+
+func contentDisposition(kind, filename string) string {
+	if filename == "" {
+		filename = "download"
+	}
+	ascii := asciiFilename(filename)
+	return fmt.Sprintf(`%s; filename="%s"; filename*=UTF-8''%s`, kind, ascii, urlPathEscape(filename))
+}
+
+func urlPathEscape(s string) string {
+	return strings.ReplaceAll(url.PathEscape(s), "%2F", "_")
+}
+
+func asciiFilename(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r < 32 || r == 127 || r == '\\' || r == '"' || r == '/' {
+			b.WriteByte('_')
+			continue
+		}
+		if r > 126 {
+			b.WriteByte('_')
+			continue
+		}
+		b.WriteRune(r)
+	}
+	out := strings.TrimSpace(b.String())
+	if out == "" {
+		return "download"
+	}
+	return out
 }
 
 // FileStat GET /file/stat?path=<file-or-dir> —— 判断路径是否存在以及是否目录。

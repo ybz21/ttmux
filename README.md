@@ -21,13 +21,13 @@ The value at a glance:
   debugging sessions, and agents survive disconnects.
 - **Manageable AI agents**: name Claude Code, Codex, or other agent workers,
   group them, inspect output, and send follow-up instructions.
-- **Swarm orchestration for complex work**: split a larger goal across tasks and
+- **Orchestration for complex work**: split a larger goal across tasks and
   agents with dependencies, a shared board, and a message feed.
 
-The `ttmux` CLI controls sessions, jobs, logs, agent workers, and swarms. The Web
-console brings the same workspace to browsers and mobile devices. Underneath,
-Roam keeps using your real development machine: tmux, shell, Chrome, the
-filesystem, and the tools you already have.
+Roam is not another cloud IDE. It connects to your real development machine and
+puts terminals, browser state, files, tasks, and AI agents into one workspace you
+can control remotely. The UI is a control surface; the work still happens in the
+development environment you already use.
 
 ![Roam Web console](docs/roam-web-console.png)
 
@@ -44,8 +44,9 @@ complex:
 - you need a way to understand what is still running
 
 Roam treats the remote machine as the source of truth. The server keeps the work
-alive. The CLI gives that work names, status, logs, and structure. The Web
-console lets you operate it from anywhere.
+alive. The Web console lets you operate it from anywhere. The command-line entry
+point makes sessions, tasks, logs, and agent orchestration scriptable when you
+need automation.
 
 ## Server Side: The Remote Workspace
 
@@ -72,141 +73,37 @@ On the server, Roam provides:
 In practice, the server answers: "What is happening on my coding machine right
 now, and how do I control it without being physically there?"
 
-## Local Side: The ttmux Control Plane
+## Typical Use
 
-`ttmux` is the local CLI that makes the workspace scriptable. It wraps tmux with
-named workflows that humans and coding agents can both use.
+1. Start Roam on your development machine.
+2. Open the Web console from a phone, tablet, laptop, or another desktop.
+3. Re-enter an existing terminal and continue the same coding context.
+4. Run Claude Code, Codex, or another coding agent on the development machine.
+5. Close your local browser, SSH session, or laptop; the work keeps running.
+6. Come back later from any device to inspect progress, send follow-up
+   instructions, or take over manually.
 
-On the terminal side, `ttmux` provides:
+Roam is not mainly a terminal shortcut. It is a persistent workspace for the
+machine where the work actually happens. Terminals, dev servers, logs, browser
+state, coding-agent conversations, and task status do not disappear just because
+your local command line or browser was closed.
 
-- **Session management**: create, attach, detach, capture, rename, and kill tmux
-  sessions with simpler commands.
-- **Parallel task groups**: run lint, tests, builds, log watchers, and scripts in
-  isolated sessions, then inspect status and collect outputs.
-- **Agent workers**: spawn multiple coding agents with separate names, working
-  directories, permissions, and follow-up channels.
-- **Swarm orchestration**: model a larger goal as a supervised group with members,
-  dependencies, a board, and a shared feed.
-- **Machine-readable output**: JSON status and collection commands for scripts,
-  agents, and the Web console.
-- **Browser automation helper**: the sibling `chrome` CLI controls the same
-  server-side Chrome instance over CDP.
-
-In practice, `ttmux` answers: "How do I split this complex coding job into
-durable, observable pieces?"
-
-## Install CLI
-
-Prerequisite: `tmux`.
+## Install And Start
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ybz21/ttmux/main/install.sh | bash
 ```
 
-The installer puts `ttmux` in `~/.local/bin`, installs shell completion, creates
-the data directories under `~/.local/share/ttmux`, and installs the bundled
-Claude Code skills when possible.
-
-If `~/.local/bin` is not on your `PATH`:
-
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Manual install:
-
-```bash
-cp ttmux ~/.local/bin/ttmux
-chmod +x ~/.local/bin/ttmux
-ttmux completion
-```
-
-## Quick Start
-
-Create and attach a persistent session:
-
-```bash
-ttmux new work
-ttmux ls
-ttmux a work
-```
-
-Run several tasks in parallel:
-
-```bash
-ttmux spawn ci \
-  "lint"      "npm run lint" \
-  "test"      "npm test" \
-  "typecheck" "npx tsc --noEmit"
-
-ttmux status ci
-ttmux wait ci
-ttmux collect ci --json
-ttmux group kill ci
-```
-
-Spawn coding agents as workers:
-
-```bash
-ttmux spawn --agent refactor \
-  "api"   "Refactor the auth API" \
-  "tests" "Add regression tests" \
-  "docs"  "Update developer docs" \
-  --dir ~/project --perm auto
-
-ttmux status refactor
-ttmux send refactor-api "Also cover expired-token behavior"
-ttmux collect refactor
-```
-
-Create a swarm for a larger goal:
-
-```bash
-ttmux swarm new login --goal "Implement login end to end"
-ttmux swarm add login api --type agent "Implement the login API"
-ttmux swarm add login ui  --type agent --depends-on api "Build the login UI"
-ttmux swarm adopt login
-ttmux swarm status login
-```
-
-## Web Console
-
-The Web console runs on the development machine and wraps the same CLI. Reads
-proxy `ttmux ... --json`; writes call the matching command.
-
-Prerequisites for the full Web console:
-
-- Go 1.21+
-- Node.js 18+ and npm
-- tmux
-- sqlite3 for swarm mode
-- Chrome or Chromium for browser mirror/control
-
-Run from a clone:
-
-```bash
-git clone https://github.com/ybz21/ttmux.git
-cd ttmux
-
 cp .env.example .env
 ./start-all.sh
 ```
 
-Useful process commands:
-
-```bash
-./start-all.sh status
-./start-all.sh logs
-./start-all.sh stop
-./start-all.sh fg
-```
-
-By default `start-all.sh` serves on `0.0.0.0:13579` so devices on the same LAN
-can reach it. Change the password and bind address in `.env` before real use:
+By default the Web console listens on `0.0.0.0:13579`, so devices on the same LAN
+can reach it. Change the password before real use:
 
 ```dotenv
 TTMUX_WEB_PASSWORD=change-this-to-a-strong-password
-TTMUX_WEB_BIND=127.0.0.1:13579
 ```
 
 For remote access, prefer Tailscale, Cloudflare Tunnel, SSH forwarding, or frp.
@@ -215,113 +112,29 @@ a strong password, and 2FA.
 
 Full deployment notes are in [docs/install/README.md](docs/install/README.md).
 
-## Core Commands
+## For Claude Code And Codex
 
-### Sessions
+If Claude Code, Codex, or another command-line coding agent is installed on your
+development machine, run it inside a Roam terminal. Its execution, output,
+conversation context, and follow-up channel stay on the development machine.
+You can return from a phone or tablet to inspect progress or add instructions.
 
-| Command | Description |
-| --- | --- |
-| `ttmux ls [--json]` | List sessions |
-| `ttmux new [name]` | Create a session |
-| `ttmux a [name]` | Attach, or pick interactively |
-| `ttmux d [name]` | Detach |
-| `ttmux kill [name]` | Kill a session |
-| `ttmux killall` | Kill all sessions |
-| `ttmux rename <old> <new>` | Rename a session |
-| `ttmux capture <session> [--lines N]` | Capture pane output |
+For larger goals, Roam can organize multiple task or agent members with a shared
+board, dependency gates, and a message feed. One member can work on the API,
+another on the UI, another on tests, and another on documentation.
 
-### Task Groups
+## Command Line And Automation
 
-| Command | Description |
-| --- | --- |
-| `ttmux spawn <group> <name> <cmd> ...` | Spawn parallel command workers |
-| `ttmux spawn --agent <group> <name> <task> ...` | Spawn parallel agent workers |
-| `ttmux spawn [--agent] --file <group> <file>` | Spawn from a task file |
-| `ttmux status <group> [--json]` | Show worker status |
-| `ttmux wait <group> [--timeout N]` | Wait for completion |
-| `ttmux collect <group> [--json]` | Collect worker output |
-| `ttmux send <session> <message>` | Send follow-up input |
-| `ttmux group ls` | List task groups |
-| `ttmux group kill <group>` | Kill a task group |
+Roam also ships command-line tools for scripts, automation, and AI agents. They
+are not the first thing a new user needs to learn; start with the Web console.
 
-Agent options:
+- `ttmux`: persistent sessions, background tasks, agent workers, swarms, and
+  machine-readable status.
+- `chrome`: drives the development machine's browser for UI debugging,
+  screenshots, form flows, and automated checks.
 
-```text
---dir <path> --model <model> --perm <mode> --max-turns <N>
-```
-
-### Swarms
-
-A swarm is a goal-bearing group for complex work. It adds member metadata,
-dependency gating, a shared board, a message feed, and optional master adoption.
-
-| Command | Description |
-| --- | --- |
-| `ttmux swarm new <name> [--goal "..."] [--no-master]` | Create a swarm |
-| `ttmux swarm add <swarm> <member> --type task|agent ...` | Add a member |
-| `ttmux swarm ls [--json]` | List swarms |
-| `ttmux swarm status <swarm> [--json]` | Show members, deps, board/feed summary |
-| `ttmux swarm activate <swarm> [member] [--force]` | Unlock pending members |
-| `ttmux swarm done <swarm> [member]` | Mark member or whole swarm done |
-| `ttmux swarm collect <swarm> [--json]` | Collect outputs |
-| `ttmux swarm say/feed/watch <swarm> ...` | Write/read/follow the message feed |
-| `ttmux swarm board <swarm> [--json]` | Show the board |
-| `ttmux swarm task <add|ls|show|assign|move|done|rm> <swarm> ...` | Manage cards |
-| `ttmux swarm sql <swarm> [--json] "SELECT ..."` | Read-only swarm database query |
-| `ttmux swarm adopt <swarm> [--by <session>]` | Hand the swarm to a master session |
-| `ttmux swarm archive|rm <swarm>` | Archive or delete |
-
-### Environment
-
-| Command | Description |
-| --- | --- |
-| `ttmux env` | List global environment values |
-| `ttmux env set <KEY=VALUE>` | Set a value for future sessions |
-| `ttmux env rm <KEY>` | Remove a value |
-| `ttmux env clear` | Clear all values |
-| `ttmux env push` | Push values into existing sessions |
-
-Unrecognized commands are forwarded to `tmux`, so normal tmux commands remain
-available.
-
-## Browser Automation
-
-`chrome` is a standalone CLI installed next to `ttmux`. It drives the shared
-Chrome instance over CDP with `playwright-core`, so actions are visible in the
-Web console browser tab.
-
-```bash
-chrome setup
-chrome goto https://example.com
-chrome fill "#q" "roam"
-chrome press "#q" Enter
-chrome text h1
-chrome screenshot shot.png --full
-chrome screenshot shot.png --fresh --goto https://example.com --viewport 1280x800
-chrome tabs
-```
-
-For batch screenshots, prefer `--fresh --goto <url>` when you do not need the
-shared browser's logged-in state. It launches a temporary clean Chrome, captures
-the page, then exits.
-
-Source: [cli/chrome-cli](cli/chrome-cli).
-
-## How It Works
-
-```text
-ttmux spawn ci "lint" "npm run lint" "test" "npm test"
-                 |
-                 +-- tmux session: ci-lint  -> log file
-                 +-- tmux session: ci-test  -> log file
-```
-
-- Each worker is a detached tmux session.
-- Output is captured with `pipe-pane` into `~/.local/share/ttmux/logs`.
-- Task group metadata lives under `~/.local/share/ttmux/groups`.
-- Swarm metadata uses SQLite under the ttmux data directory.
-- The Web console calls the CLI for orchestration and uses WebSocket/SSE for live
-  terminals, logs, status, and browser streaming.
+Command details live in [docs/install/README.md](docs/install/README.md),
+`ttmux help`, and `chrome help`.
 
 ## Repository Layout
 

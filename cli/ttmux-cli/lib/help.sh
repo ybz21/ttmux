@@ -41,8 +41,9 @@ show_help() {
     ${green}swarm activate${reset} ${dim}<群> [成员] [--force]${reset}   解锁挂起成员 (--force 无视依赖)
     ${green}swarm done${reset}   ${dim}<群> [成员]${reset}             带成员=标该成员完成并解锁下游, 无成员=整群完成
     ${green}swarm collect${reset} ${dim}<群> [--json]${reset}          收集成员输出
-    ${magenta}广场${reset} ${green}swarm say${reset} ${dim}<群> [--as 成员][--kind 类型][--re id] <消息>${reset}  发言(自动署名)
+    ${magenta}广场${reset} ${green}swarm say${reset} ${dim}<群> [--as 成员][--to 目标][--kind 类型][--re id] <消息>${reset}  发言(@提及/自动署名)
          ${green}swarm feed${reset} ${dim}<群> [-n N][--from][--kind][--since id][--json]${reset}  读消息流
+         ${green}swarm listen${reset} ${dim}<群> [--as master|成员][--once][--mentions]${reset}  agent 监听增量消息
          ${green}swarm watch${reset} ${dim}<群>${reset}                  实时跟随广场
     ${magenta}看板${reset} ${green}swarm board${reset} ${dim}<群> [--json]${reset}             看板全貌(按列)
          ${green}swarm task add${reset} ${dim}<群> "标题" [--desc/--assignee/--deps/--col]${reset}  建卡
@@ -98,4 +99,3 @@ show_help() {
 
 EOF
 }
-

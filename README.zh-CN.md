@@ -10,25 +10,26 @@ AI coding agent 持续工作。
 
 它解决的是一个很具体的问题：**复杂开发任务不应该被你的设备、网络和时间切碎。**
 代码、终端、开发服务、浏览器和 Agent 都留在开发机上持续运行；你换设备、断线、
-离开桌面后，回来仍然接着同一个现场继续。
+离开桌面后，回来仍然接着同一个现场继续。除非你主动关闭，开发机上的工作不会因为
+本地命令行退出、浏览器关闭或笔记本合盖而消失。
 
 **一眼看懂 Roam 的价值：**
 
 - **远程开发不断线**：手机查看进度，平板补充指令，电脑接手编码，工作现场始终在开发机上。
 - **长任务持续跑**：测试、构建、迁移、日志和调试会话不因合盖、断网、换设备而中断。
-- **AI Agent 可管理**：Claude Code、Codex 等 Agent 可以被命名、分组、追踪输出、随时追加指令。
-- **复杂任务可编排**：用 **swarm** 把多个 Agent/任务串成带目标、依赖、看板和消息流的协作系统。
+- **现场不会丢**：终端、服务、浏览器状态和 Agent 对话都留在开发机上，除非你主动关闭。
+- **AI Agent 可管理**：Claude Code、Codex 等 Agent 可以被分组、追踪输出、随时追加指令。
+- **复杂任务可编排**：把多个 Agent/任务串成带目标、依赖、看板和消息流的协作系统。
 
-命令行工具 **`ttmux`** 负责会话、任务、日志和 swarm 编排；Web 控制台负责让这些
-能力进入浏览器和移动设备。底层复用你的真实开发机：tmux、shell、Chrome、文件系统
-和已有开发工具，不要求迁移到新的云 IDE 或封闭运行环境。
+Roam 不是另一个云 IDE。它连接你的真实开发机，把终端、浏览器、文件、任务和
+AI Agent 放进一个可远程接管的工作空间里。你看到的是一个控制台，背后仍然是你
+熟悉的开发环境和工具链。
 
 ![Roam Web 控制台](docs/roam-web-console.png)
 
-## 系统优势
+## 核心能力
 
-- **随身开发**：手机、平板、电脑都能连接同一台开发机，查看终端、日志、任务和
-  Agent 进度。
+- **随身开发**：手机、平板、电脑都能连接同一台开发机，查看终端、日志、任务和 Agent 进度。
 - **上下文不丢**：会话跑在开发机上，断网、关浏览器、换设备后仍可继续接回原来的
   工作现场。
 - **长任务不断**：构建、测试、迁移、调试、爬日志和 Agent 执行都可以在后台持续
@@ -37,12 +38,8 @@ AI coding agent 持续工作。
   也能随时追加指令。
 - **swarm 串联复杂任务**：把一个大目标拆成多个成员，设置依赖关系，通过共享看板和
   广场消息流推进协作。
-- **终端和 Web 一套能力**：CLI 适合脚本和自动化，Web 控制台适合远程查看、移动端
-  操作和实时接管。
-- **贴近真实开发机**：Roam 不发明新的运行环境，而是复用开发机上的 tmux、shell、
-  Chrome、文件系统和现有开发工具。
-- **可脚本化、可观测**：任务状态、日志、输出和 swarm 数据都可以被 CLI 或 JSON
-  读取，方便人和 Agent 一起使用。
+- **浏览器也在开发机上**：远程调试 UI、登录态、截图和复现流程都能留在同一个工作现场。
+- **适合人和 Agent 一起用**：人可以从 Web 控制台接管，Agent 可以读取状态、收集输出、继续推进。
 
 ## 为什么需要它
 
@@ -55,252 +52,74 @@ AI coding agent 持续工作。
 - 长任务要能在你离线后继续执行
 - 你需要快速知道现在到底哪些任务还在跑
 
-Roam 把开发机作为唯一真实工作现场。服务器负责保持工作持续运行，`ttmux` 负责给
-会话、任务、日志和 Agent 编排命名并提供状态，Web 控制台负责让你从任何设备接入。
+Roam 把开发机作为唯一真实工作现场。服务器负责保持工作持续运行，Web 控制台负责让
+你从任何设备接入；需要自动化时，再通过脚本接口把会话、任务、日志和 Agent 编排接入流程。
 
-## ttmux 是什么
+## 典型使用方式
 
-tmux 是做并行工作的理想底座：
+1. 在开发机上启动 Roam。
+2. 从手机、平板或另一台电脑打开 Web 控制台。
+3. 进入已有终端，继续之前的开发现场。
+4. 让 Claude Code、Codex 或其他 Agent 在开发机上执行长任务。
+5. 离开浏览器或关闭本地命令行后，开发机上的终端、服务、日志和 Agent 仍继续运行。
+6. 稍后从任意设备回来，继续查看进度、追加指令或接手编码。
 
-- 会话是 **隔离的执行环境**
-- 输出可被 **程序化捕获**
-- 一切皆可 **脚本化** 组合
-- 零额外开销，只是进程和管道
+Roam 的重点不是“多一个终端工具”，而是让开发机变成一个持续在线的工作空间。你在
+开发机上打开的终端、运行中的服务、调试浏览器、AI Agent 对话和任务状态，不会因为
+本地设备关机、SSH 断开、浏览器关闭而主动消失。
 
-`ttmux` 在 tmux 上补上更适合远程开发和 Agent 协作的控制层：会话管理、并行任务、
-输出收集、多 Agent worker、swarm 编排，以及机器可读的 JSON 状态。
-
-## 安装
+## 安装与启动
 
 ```bash
 # 一键安装
 curl -fsSL https://raw.githubusercontent.com/ybz21/ttmux/main/install.sh | bash
-
-# 或手动
-cp ttmux ~/.local/bin/
-chmod +x ~/.local/bin/ttmux
-ttmux completion   # 安装 Tab 补全
 ```
-
-完整指南（CLI + Web 控制台、配置、远程访问）见 **[docs/install/](docs/install/)**。
-
-## 快速开始
 
 ```bash
-ttmux new work        # 新建会话
-ttmux ls              # 列出会话
-ttmux a work          # 进入会话
-ttmux kill work       # 关闭会话
+# 启动 Web 控制台
+cp .env.example .env
+./start-all.sh
 ```
 
-## 任务编排
+默认监听 `0.0.0.0:13579`，局域网设备可以直接访问。正式使用前请修改 `.env` 里的
+访问口令；远程访问建议走 Tailscale、Cloudflare Tunnel、SSH forwarding 或 frp。
 
-杀手级功能。把任何复杂任务拆成并行子任务：
+完整安装、部署、远程访问和命令行自动化说明见 **[docs/install/](docs/install/)**。
 
-```bash
-# 起一个含 3 个并行 worker 的任务组
-ttmux spawn ci \
-  "lint"      "npm run lint" \
-  "test"      "npm test" \
-  "typecheck" "npx tsc --noEmit"
+## 给 Claude Code / Codex 用
 
-ttmux status ci          # 看进度
-ttmux wait ci            # 等全部完成
-ttmux collect ci --json  # 收集所有输出
-ttmux group kill ci      # 清理
-```
+如果开发机上装了 Claude Code、Codex 或其他命令行编程工具，你可以直接在 Roam 的
+持久终端里运行它们。它们的执行过程、输出、上下文和后续指令入口都会留在开发机上；
+你从手机或平板回来时，可以继续看它们跑到哪里，也可以继续追加要求。
 
-用 `--agent` 以同样方式起 Claude Agent：
+更复杂的任务可以用 Roam 的 swarm 能力拆成多个成员：有人负责 API，有人负责前端，
+有人负责测试，有人负责文档；共享看板和消息流用于同步进度，依赖完成后再解锁下一步。
 
-```bash
-ttmux spawn --agent refactor \
-  "api"   "重构用户认证模块" \
-  "db"    "优化数据库查询性能" \
-  "tests" "补充单元测试" \
-  --dir ~/project --perm auto
+## 命令行和自动化
 
-ttmux status refactor                 # 进度（命令 + Agent）
-ttmux send refactor-api "加上 JWT"    # 给运行中的 Agent 追加指令
-ttmux collect refactor                # 收集所有输出
-```
+Roam 也提供命令行入口，方便脚本、自动化流程和 AI Agent 调用。这里不是普通用户的
+主入口；大多数时候你可以先从 Web 控制台开始。
 
-也可从文件加载任务：
+- `ttmux`：管理持久会话、后台任务、Agent worker、swarm 和机器可读状态。
+- `chrome`：驱动开发机上的 Chrome，用于 UI 调试、截图、表单操作和自动化验收。
 
-```bash
-# tasks.txt —— 每行 "名字 命令"
-# lint    npm run lint
-# test    npm test
-# build   npm run build
+命令细节不放在首页展开，避免 README 变成工具手册。需要时请看
+**[docs/install/](docs/install/)**、`ttmux help` 和 `chrome help`。
 
-ttmux spawn --file release tasks.txt
-```
+## 安全提醒
 
-## 命令
+Roam 能控制你的开发机终端、文件、浏览器和 Agent，安全级别接近 SSH。正式部署时请：
 
-### 会话管理
-
-| 命令 | 说明 |
-|------|------|
-| `ttmux ls [--json]` | 列出所有会话 |
-| `ttmux new [name]` | 新建会话 |
-| `ttmux a [name]` | 进入会话（不给名字则交互选择） |
-| `ttmux d` | 脱离当前会话 |
-| `ttmux kill [name]` | 关闭会话（需确认） |
-| `ttmux killall` | 关闭所有会话 |
-| `ttmux rename <old> <new>` | 重命名会话 |
-
-### 任务编排
-
-| 命令 | 说明 |
-|------|------|
-| `ttmux spawn <group> <n1> <c1> ...` | 起并行命令任务 |
-| `ttmux spawn --agent <group> <n1> <task1> ...` | 起并行 Claude Agent |
-| `ttmux spawn [--agent] --file <group> <file>` | 从任务文件起 |
-| `ttmux status [group] [--json]` | 总览或某组状态（命令 + Agent） |
-| `ttmux wait <group> [--timeout N]` | 等待某组完成 |
-| `ttmux collect <group> [--json]` | 收集所有任务输出 |
-| `ttmux send <session> <msg>` | 给任务/Agent 追加指令 |
-| `ttmux group ls` | 列出所有任务组 |
-| `ttmux group kill <name>` | 关闭组内所有任务 |
-| `ttmux capture <session> [--lines N]` | 捕获 pane 输出 |
-
-Agent 选项：`--dir <路径>` `--model <模型>` `--perm <模式>` `--max-turns <N>`。
-旧别名 `agent spawn|status|send|collect|kill` 仍可用。
-
-### 蜂群（swarm）
-
-蜂群是一个**带目标的任务组**，有依赖门控、共享**看板**(kanban) 和**广场**(消息流)——还能被一个 `cc` 主控会话接管做自主监督。
-
-| 命令 | 说明 |
-|------|------|
-| `ttmux swarm new <name> [--goal "..."] [--no-master]` | 建群（默认起一个 `cc` 主控） |
-| `ttmux swarm add <swarm> <member> --type task\|agent ... <cmd/task>` | 加成员（`--depends-on a,b` 做门控） |
-| `ttmux swarm ls [--json]` | 列出蜂群（目标 / 状态 / 主控） |
-| `ttmux swarm status <swarm> [--json]` | 成员、依赖、待解锁 + 看板/广场摘要 |
-| `ttmux swarm activate <swarm> [member] [--force]` | 解锁待定成员（`--force` 忽略依赖） |
-| `ttmux swarm done <swarm> [member]` | 标记成员完成 + 级联解锁（不给成员 = 整群） |
-| `ttmux swarm collect <swarm> [--json]` | 收集成员输出 |
-| `ttmux swarm say / feed / watch <swarm> ...` | 广场：发言 / 读流 / 实时跟随 |
-| `ttmux swarm board <swarm> [--json]` | 按列看板总览 |
-| `ttmux swarm task <add\|ls\|show\|assign\|move\|done\|rm> <swarm> ...` | 管理看板卡片 |
-| `ttmux swarm sql <swarm> [--json] "SELECT ..."` | 只读查询该群的 `swarm.db` |
-| `ttmux swarm adopt <swarm> [--by <cc session>]` | 把蜂群交给一个 `cc` 主控 |
-| `ttmux swarm archive\|rm <swarm>` | 归档 / 删除 |
-
-```bash
-ttmux swarm new login --goal "加登录功能"
-ttmux swarm add login api --type agent "实现登录 API"
-ttmux swarm adopt login                 # 让 cc 主控来监督
-```
-
-### 窗口与 Pane
-
-| 命令 | 说明 |
-|------|------|
-| `ttmux nw [name]` | 新建窗口 |
-| `ttmux lw` | 列出窗口 |
-| `ttmux kw [id]` | 关闭窗口 |
-| `ttmux sp [-h\|-v]` | 拆分 pane |
-| `ttmux kp` | 关闭 pane |
-
-### 杂项
-
-| 命令 | 说明 |
-|------|------|
-| `ttmux send [session] <cmd>` | 给会话发命令 |
-| `ttmux info` | 服务器信息 |
-| `ttmux source` | 重载 tmux.conf |
-| `ttmux completion` | 安装 Tab 补全 |
-
-任何无法识别的命令都会直接转发给 `tmux`。
-
-### 浏览器自动化 —— `chrome`
-
-`chrome` 是**独立 CLI**（与 `ttmux` 平级，不是子命令），用 **Playwright**
-（`connectOverCDP`）通过 CDP 驱动 Chrome，接的是 Web 控制台镜像的那台全局 Chrome
-——**自动化能在「浏览器」标签里实时围观**。依赖很轻：`npm i playwright-core`
-（不下载自带浏览器），`install.sh` 自动装好。
-
-```bash
-chrome goto https://example.com
-chrome fill "#q" "hello" && chrome press "#q" Enter
-chrome text h1
-chrome eval "document.title"
-chrome screenshot shot.png --full
-chrome screenshot shot.png --fresh --goto https://example.com --viewport 1280x800
-```
-
-动词：`goto / click / fill / type / press / text / html / attr / eval / wait /
-screenshot / pdf / tabs / new / close`。选项 `--tab N` / `--url <子串>` 选标签页；
-`--timeout <ms>`、`--cdp <地址>`。批量截图优先用 `--fresh --goto <url>`，
-它会临时启动干净 Chrome 截完即退，不依赖共享浏览器状态。完整列表见 `chrome help`，源码见
-[`cli/chrome-cli/`](cli/chrome-cli/)。
-
-## 给 AI Agent 用
-
-ttmux 设计上就是给 [Claude Code](https://claude.ai/code) 等 AI Agent 调用的。
-
-### Claude Code Skill
-
-```bash
-# 安装 skill
-mkdir -p ~/.claude/skills/cc-swarm
-cp -r skills/cc-swarm/* ~/.claude/skills/cc-swarm/
-```
-
-`cc-swarm` skill 教 Claude Code 把目标拆成蜂群、按依赖门控成员、并通过看板 + 广场监督进度。
-
-### JSON 模式
-
-所有查询类命令都支持 `--json` 输出机器可读结果：
-
-```bash
-ttmux ls --json
-ttmux status ci --json
-ttmux collect ci --json
-```
-
-## Web 控制台
-
-`ttmux-web` 是 Go(Gin) + React(Vite + Antd) 控制台——CLI 的薄封装（读 = 代理 `ttmux <cmd> --json`，写 = 调对应子命令）。覆盖 会话 / 任务 / 蜂群看板+广场 / Env，每个会话带实时 xterm.js 终端，状态走 SSE 流。
-
-```bash
-cp .env.example .env  # 设置口令 / 端口
-./start-all.sh        # 构建前端 → 编译后端 → 启动（后台守护）
-```
-
-默认监听 `0.0.0.0:13579`（局域网可达）。配置走仓库根的 `.env`；完整安装、全部环境变量、远程访问见 **[docs/install/](docs/install/)**。后端内部细节见 [`backend/README.md`](backend/README.md)。
-
-> ⚠ Web 控制台等于把 shell 执行能力搬上网。请用强 `TTMUX_WEB_PASSWORD`，
-> 外网访问走隧道（Tailscale / Cloudflare），不要直接暴露端口。
-
-## 工作原理
-
-```
-                    ttmux spawn build "lint" "npm run lint" "test" "npm test"
-                                         │
-                    ┌────────────────────┼────────────────────┐
-                    ▼                    ▼                    ▼
-             ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-             │ build-lint   │    │ build-test   │    │  (next...)  │
-             │ tmux session │    │ tmux session │    │ tmux session│
-             └──────┬───────┘    └──────┬───────┘    └─────────────┘
-                    │ pipe-pane          │ pipe-pane
-                    ▼                    ▼
-             ~/.local/share/      ~/.local/share/
-             ttmux/logs/          ttmux/logs/
-             build-lint.log       build-test.log
-```
-
-- 每个任务 = 一个 detached tmux 会话
-- 输出经 `pipe-pane` 自动落日志
-- 组元数据存 `~/.local/share/ttmux/groups/`
-- 状态从 tmux 格式串查询（`#{pane_dead}`、`#{pane_current_command}`）
+- 使用强访问口令，并按需开启两步验证。
+- 外网访问优先走 Tailscale、Cloudflare Tunnel、SSH forwarding 或 frp。
+- 不要把 Web 控制台端口直接暴露到公网。
+- 只在你信任的机器和账号上运行。
 
 ## 文档
 
 - [docs/install/](docs/install/) — 安装与部署
 - [docs/design/](docs/design/) — 设计文档（蜂群编排 / 广场看板 / Web 接入）
+- [backend/README.md](backend/README.md) — 后端实现细节
 
 ## License
 

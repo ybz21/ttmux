@@ -27,6 +27,7 @@ MODULES=(
     swarm
     plaza
     board
+    listener
     completion
     help
     interactive
