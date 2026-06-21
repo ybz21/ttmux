@@ -1,7 +1,7 @@
 // 文件侧栏 —— 在 Claude / Codex 对话页右侧浏览工作目录、查看文件内容（类似 codex 右侧边栏）。
 // 单层可导航列表：目录在前可进入、↑ 回上级、点文件在弹层里查看正文。
 import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from 'react'
-import { Button, Modal, Spin, App as AntApp, Tooltip } from 'antd'
+import { Button, Modal, Space, Spin, App as AntApp, Tooltip } from 'antd'
 import { api, upload } from './api'
 import Markdown from './Markdown'
 
@@ -173,7 +173,21 @@ const IconButton = ({ title, children, danger, onClick, disabled, width = 24 }: 
     </Button>
   </Tooltip>
 )
-function Viewer({ path, accent, onClose, onOpenPath }: { path: string; accent: string; onClose: () => void; onOpenPath: (p: string) => void }) {
+function Viewer({
+  path,
+  accent,
+  inline,
+  onClose,
+  onOpenPath,
+  onOpenAgent,
+}: {
+  path: string
+  accent: string
+  inline?: boolean
+  onClose: () => void
+  onOpenPath: (p: string) => void
+  onOpenAgent?: (kind: 'claude' | 'codex', path: string) => void
+}) {
   const ext = extOf(path)
   const isImg = IMG_EXT.includes(ext)
   const isMd = MD_EXT.includes(ext)
@@ -185,6 +199,7 @@ function Viewer({ path, accent, onClose, onOpenPath }: { path: string; accent: s
   const [data, setData] = useState<any>(null)
   const [err, setErr] = useState('')
   const [source, setSource] = useState(false) // markdown：源码/渲染切换
+  const [agentPick, setAgentPick] = useState(false)
   const { message } = AntApp.useApp()
 
   useEffect(() => {
@@ -241,28 +256,32 @@ function Viewer({ path, accent, onClose, onOpenPath }: { path: string; accent: s
     ))
   }
 
-  return (
-    <Modal open onCancel={onClose} footer={null} width="min(900px,94vw)"
-      title={
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingRight: 28 }}>
-          <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            <span style={{ color: accent }}>▸</span> {name}
-          </span>
-          <span style={{ flex: 1 }} />
-          {isMd && data && !data.binary && (
-            <Button size="small" onClick={() => setSource((s) => !s)}>{source ? '渲染' : '源码'}</Button>
-          )}
-          <Button size="small" onClick={copyPath}>复制路径</Button>
-          <Button size="small" href={`${rawUrl}&dl=1`}>下载</Button>
-          <a href={rawUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--text-dim)', fontSize: 12 }}>原始</a>
-        </div>
-      }>
+  const titleNode = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingRight: inline ? 0 : 28, minWidth: 0 }}>
+      <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ color: accent }}>▸</span> {name}
+      </span>
+      <span style={{ flex: 1, minWidth: 8 }} />
+      {isMd && data && !data.binary && (
+        <Button size="small" onClick={() => setSource((s) => !s)}>{source ? '渲染' : '源码'}</Button>
+      )}
+      {onOpenAgent && (
+        <Button size="small" onClick={() => setAgentPick(true)}>在 Agent 中打开</Button>
+      )}
+      <Button size="small" onClick={copyPath}>复制路径</Button>
+      <Button size="small" href={`${rawUrl}&dl=1`}>下载</Button>
+      <a href={rawUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--text-dim)', fontSize: 12 }}>原始</a>
+      {inline && <IconButton title="关闭预览" onClick={onClose}><CloseIcon /></IconButton>}
+    </div>
+  )
+  const bodyNode = (
+    <>
       {isImg ? (
         <div style={{ textAlign: 'center', background: 'var(--bg-base)', borderRadius: 8, padding: 12 }}>
-          <img src={rawUrl} alt={name} style={{ maxWidth: '100%', maxHeight: '74vh', objectFit: 'contain' }} />
+          <img src={rawUrl} alt={name} style={{ maxWidth: '100%', maxHeight: inline ? 'calc(100vh - 160px)' : '74vh', objectFit: 'contain' }} />
         </div>
       ) : isPdf ? (
-        previewShell('PDF 内嵌预览', <iframe title={name} src={rawUrl} style={{ width: '100%', height: '74vh', border: 0, background: '#fff' }} />)
+        previewShell('PDF 内嵌预览', <iframe title={name} src={rawUrl} style={{ width: '100%', height: inline ? 'calc(100vh - 170px)' : '74vh', border: 0, background: '#fff' }} />)
       ) : isOffice ? (
         previewShell('Office 文件预览', (
           <div style={{ padding: 18, color: 'var(--text-dim)', lineHeight: 1.7 }}>
@@ -297,6 +316,32 @@ function Viewer({ path, accent, onClose, onOpenPath }: { path: string; accent: s
           )}
         </>
       )}
+      {onOpenAgent && (
+        <Modal open={agentPick} title="在 Agent 中打开" footer={null} onCancel={() => setAgentPick(false)}>
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <div style={{ color: 'var(--text-dim)', fontFamily: 'ui-monospace, monospace', wordBreak: 'break-all' }}>{path}</div>
+            <Space>
+              <Button type="primary" onClick={() => { setAgentPick(false); onOpenAgent('claude', path) }}>Claude Code</Button>
+              <Button onClick={() => { setAgentPick(false); onOpenAgent('codex', path) }}>Codex</Button>
+            </Space>
+          </Space>
+        </Modal>
+      )}
+    </>
+  )
+
+  if (inline) {
+    return (
+      <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: '#070b10' }}>
+        <div style={{ padding: '9px 12px', borderBottom: '1px solid var(--border-subtle)' }}>{titleNode}</div>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12 }}>{bodyNode}</div>
+      </div>
+    )
+  }
+
+  return (
+    <Modal open onCancel={onClose} footer={null} width="min(900px,94vw)" title={titleNode}>
+      {bodyNode}
     </Modal>
   )
 }
@@ -317,7 +362,21 @@ function fence(lang: string, content: string): string {
   return '```' + lang + '\n' + content + '\n```'
 }
 
-export default function FileBrowser({ dir, accent = '#58a6ff', onClose, onInsertPath }: { dir?: string; accent?: string; onClose?: () => void; onInsertPath?: (p: string) => void }) {
+export default function FileBrowser({
+  dir,
+  accent = '#58a6ff',
+  layout = 'sidebar',
+  onClose,
+  onInsertPath,
+  onOpenAgent,
+}: {
+  dir?: string
+  accent?: string
+  layout?: 'sidebar' | 'split'
+  onClose?: () => void
+  onInsertPath?: (p: string) => void
+  onOpenAgent?: (kind: 'claude' | 'codex', path: string) => void
+}) {
   const [path, setPath] = useState(dir || '')
   const [data, setData] = useState<Dir | null>(null)
   const [err, setErr] = useState('')
@@ -381,7 +440,21 @@ export default function FileBrowser({ dir, accent = '#58a6ff', onClose, onInsert
   // 根目录之上不再回退（防止越过工作目录乱逛；dir 为空时允许一直向上）
   const canUp = !!data && data.parent !== data.path && (!dir || cur !== dir)
 
-  return (
+  const openPath = async (target: string) => {
+    try {
+      const res = await api('GET', `/file/stat?path=${encodeURIComponent(target)}`)
+      if (res.data?.dir) {
+        setPath(target)
+        setView(null)
+      } else {
+        setView(target)
+      }
+    } catch (e: any) {
+      message.error('无法打开引用文件：' + e.message)
+    }
+  }
+
+  const browserPane = (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#0a0e13', borderLeft: '1px solid var(--border-subtle)' }}>
       <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--border-subtle)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
@@ -448,21 +521,30 @@ export default function FileBrowser({ dir, accent = '#58a6ff', onClose, onInsert
         ))}
         {data && data.entries.length === 0 && <div style={{ color: 'var(--text-dimmer)', fontSize: 12, padding: '6px 10px' }}>空目录</div>}
       </div>
-      {view && <Viewer path={view} accent={accent} onClose={() => setView(null)} onOpenPath={async (target) => {
-        try {
-          const res = await api('GET', `/file/stat?path=${encodeURIComponent(target)}`)
-          if (res.data?.dir) {
-            setPath(target)
-            setView(null)
-          } else {
-            setView(target)
-          }
-        } catch (e: any) {
-          message.error('无法打开引用文件：' + e.message)
-        }
-      }} />}
+      {layout === 'sidebar' && view && <Viewer path={view} accent={accent} onClose={() => setView(null)} onOpenPath={openPath} />}
     </div>
   )
+
+  if (layout === 'split') {
+    return (
+      <div style={{ height: '100%', minHeight: 0, display: 'flex', background: '#070b10' }}>
+        <div style={{ flex: '0 0 clamp(280px, 32vw, 420px)', minWidth: 0, borderRight: '1px solid var(--border-subtle)' }}>
+          {browserPane}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {view ? (
+            <Viewer path={view} accent={accent} inline onClose={() => setView(null)} onOpenPath={openPath} onOpenAgent={onOpenAgent} />
+          ) : (
+            <div style={{ height: '100%', display: 'grid', placeItems: 'center', color: 'var(--text-dimmer)', fontSize: 13 }}>
+              选择左侧文件查看预览
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return browserPane
 }
 
 function rowStyle(): React.CSSProperties {

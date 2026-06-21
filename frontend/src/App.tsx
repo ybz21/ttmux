@@ -95,10 +95,39 @@ function TypeTag({ type }: { type?: string }) {
   return type === 'agent' ? <Tag color="blue">🤖 Agent</Tag> : <Tag>⌨️ 命令</Tag>
 }
 
-function FilesPage() {
+function pathDirname(path: string): string {
+  const i = path.lastIndexOf('/')
+  return i <= 0 ? '/' : path.slice(0, i)
+}
+
+function pathBasename(path: string): string {
+  return path.split('/').filter(Boolean).pop() || 'file'
+}
+
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`
+}
+
+function FilesPage({ openTerm }: { openTerm: (name: string) => void }) {
+  const { message } = AntApp.useApp()
+  const openAgent = async (kind: 'claude' | 'codex', file: string) => {
+    const base = pathBasename(file).replace(/[^a-zA-Z0-9_.-]+/g, '-').slice(0, 28) || 'file'
+    const name = `${kind}-${base}-${Date.now().toString(36).slice(-5)}`
+    const dir = pathDirname(file)
+    const prompt = `请打开并查看这个文件：${file}`
+    const cmd = `${kind === 'claude' ? 'claude' : 'codex'} ${shellQuote(prompt)}`
+    try {
+      await api('POST', '/sessions', { name, dir })
+      await api('POST', '/tasks/_/send', { sess: name, msg: cmd })
+      message.success(`已在 ${kind === 'claude' ? 'Claude Code' : 'Codex'} 中打开`)
+      openTerm(name)
+    } catch (e: any) {
+      message.error('打开失败：' + e.message)
+    }
+  }
   return (
     <div style={{ height: '100%', minHeight: 0 }}>
-      <FileBrowser accent="#58a6ff" />
+      <FileBrowser accent="#58a6ff" layout="split" onOpenAgent={openAgent} />
     </div>
   )
 }
@@ -229,7 +258,7 @@ export default function App() {
     overview: <Overview go={go} openTerm={openTerm} kanna={kanna} />,
     swarm: <Swarm openTerm={openTerm} initialSwarm={swarmSub || undefined} onNav={(n) => { location.hash = n ? '#/swarm/' + encodeURIComponent(n) : '#/swarm' }} />,
     sessions: <Sessions openTerm={openTerm} />,
-    files: <FilesPage />,
+    files: <FilesPage openTerm={openTerm} />,
     env: <EnvPage />,
     browser: <BrowserView />,
   }
