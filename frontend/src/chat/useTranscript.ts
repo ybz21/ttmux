@@ -11,6 +11,7 @@ export function useTranscript(name: string, file: string | undefined, path: stri
     let stop = false
     let offset = 0
     let f = file
+    let lastFile = file || ''
     setMsgs([]); setErr('')
     const poll = async () => {
       try {
@@ -19,7 +20,18 @@ export function useTranscript(name: string, file: string | undefined, path: stri
         const r = await api('GET', `/sessions/${encodeURIComponent(name)}/${path}?${q.toString()}`)
         const d = r.data
         if (stop) return
-        if (d.file) f = d.file
+        if (d.file && d.file !== lastFile) {
+          f = d.file
+          lastFile = d.file
+          offset = 0
+          setMsgs([])
+          return
+        }
+        if (typeof d.nextOffset === 'number' && d.nextOffset < offset) {
+          offset = 0
+          setMsgs([])
+          return
+        }
         if (d.messages?.length) { setMsgs((m) => [...m, ...d.messages]); offset = d.nextOffset }
         else if (typeof d.nextOffset === 'number') offset = d.nextOffset
       } catch (e: any) { if (!stop) setErr(e.message) }
@@ -28,7 +40,7 @@ export function useTranscript(name: string, file: string | undefined, path: stri
     const t = setInterval(poll, interval)
     return () => { stop = true; clearInterval(t) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name])
+  }, [name, file, path])
   return { msgs, err }
 }
 

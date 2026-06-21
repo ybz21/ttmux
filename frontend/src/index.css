@@ -158,6 +158,19 @@ body {
 .cc-codebox:hover .cc-copy, .cc-copy:focus { opacity: 1; }
 @media (pointer: coarse) { .cc-copy { opacity: .6; } }
 
+/* 对话气泡复制：靠近时间显示，桌面 hover 浮现，触屏常显。 */
+.cc-msg-copy {
+  opacity: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dimmer);
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.cc-msg:hover .cc-msg-copy, .cc-msg-copy:focus { opacity: 1; color: var(--text-dim); }
+@media (pointer: coarse) { .cc-msg-copy { opacity: 1; } }
+
 /* ── 语法高亮（highlight.js 类 → 主题变量；不引外部 CSS，随黑白主题切换） ── */
 .hljs { color: var(--text-bright); background: transparent; }
 .hljs-comment, .hljs-quote { color: var(--hl-comment); font-style: italic; }
