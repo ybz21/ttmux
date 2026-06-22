@@ -529,7 +529,7 @@ function memberColor(name: string) {
   return MEMBER_COLORS[stableIndex(name, MEMBER_COLORS.length)]
 }
 function memberHatColor(n: any) {
-  if (n.role === 'leader' || isLeaderRole(n.mrole)) return '#3fb950'
+  if (n.role === 'leader' || isLeaderRole(n.mrole)) return '#f85149'
   return MEMBER_HAT_COLORS[stableIndex(n.name || '', MEMBER_HAT_COLORS.length)]
 }
 function memberHatStyle(n: any) {

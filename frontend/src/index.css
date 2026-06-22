@@ -343,7 +343,7 @@ body {
   bottom: 20px;
   height: 11px;
   border-radius: 2px;
-  background: color-mix(in srgb, var(--node-accent) 86%, white);
+  background: linear-gradient(180deg, #9aa3af, #69727e);
   box-shadow: 0 1px 0 rgba(255,255,255,.18), 0 2px 4px rgba(1,4,9,.2);
 }
 .swarm-office-agent {
@@ -363,23 +363,23 @@ body {
 .swarm-office-agent span {
   display: block;
   position: absolute;
-  left: 8px;
-  right: 8px;
-  top: -6px;
-  height: 15px;
+  left: 7px;
+  right: 10px;
+  top: -4px;
+  height: 13px;
   z-index: 2;
-  border-radius: 12px 12px 5px 5px;
+  border-radius: 999px 999px 7px 7px;
   background: linear-gradient(180deg, color-mix(in srgb, var(--hat-color) 84%, white), var(--hat-color));
   box-shadow: inset 0 -2px 0 rgba(1, 4, 9, .18);
 }
 .swarm-office-agent span::after {
   content: "";
   position: absolute;
-  left: 22px;
-  bottom: -3px;
-  width: 20px;
-  height: 6px;
-  border-radius: 0 999px 999px 0;
+  left: 24px;
+  bottom: -5px;
+  width: 19px;
+  height: 7px;
+  border-radius: 3px 999px 999px 3px;
   background: var(--hat-color);
   box-shadow: 0 2px 0 rgba(1, 4, 9, .18);
 }
@@ -404,28 +404,28 @@ body {
 .swarm-office-agent.hat-1 span {
   left: 6px;
   right: 10px;
-  top: -6px;
-  height: 15px;
-  border-radius: 50% 44% 34% 38%;
-  transform: rotate(-8deg);
+  top: -4px;
+  height: 13px;
+  border-radius: 999px 999px 8px 7px;
+  transform: rotate(-4deg);
 }
 .swarm-office-agent.hat-1 span::after {
-  left: 25px;
-  bottom: -2px;
-  width: 16px;
+  left: 24px;
+  bottom: -4px;
+  width: 18px;
 }
 .swarm-office-agent.hat-2 span {
-  left: 10px;
-  right: 7px;
-  top: -8px;
-  height: 17px;
-  border-radius: 11px 11px 8px 8px;
+  left: 8px;
+  right: 8px;
+  top: -6px;
+  height: 15px;
+  border-radius: 10px 10px 7px 7px;
 }
 .swarm-office-agent.hat-2 span::after {
-  left: 4px;
-  bottom: -4px;
-  width: 30px;
-  height: 5px;
+  left: 20px;
+  bottom: -5px;
+  width: 22px;
+  height: 6px;
   border-radius: 999px;
 }
 .swarm-office-agent::before,
