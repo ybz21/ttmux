@@ -1,4 +1,4 @@
-package groupcmd
+package group
 
 import (
 	"encoding/json"

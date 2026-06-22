@@ -10,11 +10,11 @@ shell file:
 - `cmd/ttmux-cli-go`: thin executable entrypoint.
 - `internal/app`: command routing and compatibility decisions.
 - `internal/runtime`: filesystem layout, tmux execution, shell fallback, task metadata.
-- `internal/domain/sessioncmd`: sessions, capture, and info JSON.
-- `internal/domain/groupcmd`: group list/status/collect JSON.
-- `internal/domain/envcmd`: global env storage.
-- `internal/domain/swarmcmd`: swarm command routing.
-- `internal/core`: reusable swarm data/status core.
+- `internal/command/session`: session command adapters, capture, and info JSON.
+- `internal/command/group`: group command adapters for list/status/collect JSON.
+- `internal/command/env`: global env command adapters and storage.
+- `internal/command/swarm`: swarm command adapter and shell fallback boundary.
+- `internal/swarm`: reusable swarm data/status core.
 
 ## Compatibility Strategy
 

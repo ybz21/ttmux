@@ -1,4 +1,4 @@
-package core
+package swarm
 
 import (
 	"database/sql"

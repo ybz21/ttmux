@@ -5,10 +5,10 @@ import (
 	"os"
 	"strings"
 
-	"ttmux-cli-go/internal/domain/envcmd"
-	"ttmux-cli-go/internal/domain/groupcmd"
-	"ttmux-cli-go/internal/domain/sessioncmd"
-	"ttmux-cli-go/internal/domain/swarmcmd"
+	envelope "ttmux-cli-go/internal/command/env"
+	"ttmux-cli-go/internal/command/group"
+	"ttmux-cli-go/internal/command/session"
+	swarmcommand "ttmux-cli-go/internal/command/swarm"
 	"ttmux-cli-go/internal/runtime"
 )
 
@@ -37,32 +37,32 @@ func (a App) Run(args []string) error {
 		return nil
 	case "ls":
 		if has(rest, "--json") {
-			return sessioncmd.ListJSON(a.rt, os.Stdout)
+			return session.ListJSON(a.rt, os.Stdout)
 		}
 		return a.rt.Shell(args...)
 	case "group":
 		return a.runGroup(rest)
 	case "status":
 		if len(rest) >= 2 && rest[1] == "--json" {
-			return groupcmd.StatusJSON(a.rt, rest[0], os.Stdout)
+			return group.StatusJSON(a.rt, rest[0], os.Stdout)
 		}
 		return a.rt.Shell(args...)
 	case "capture":
-		return sessioncmd.Capture(a.rt, rest, os.Stdout)
+		return session.Capture(a.rt, rest, os.Stdout)
 	case "collect":
 		if len(rest) >= 2 && rest[1] == "--json" {
-			return groupcmd.CollectJSON(a.rt, rest[0], os.Stdout)
+			return group.CollectJSON(a.rt, rest[0], os.Stdout)
 		}
 		return a.rt.Shell(args...)
 	case "env":
-		return envcmd.Run(a.rt, rest, os.Stdout)
+		return envelope.Run(a.rt, rest, os.Stdout)
 	case "info":
 		if has(rest, "--json") {
-			return sessioncmd.InfoJSON(a.rt, version, os.Stdout)
+			return session.InfoJSON(a.rt, version, os.Stdout)
 		}
 		return a.rt.Shell(args...)
 	case "swarm":
-		return swarmcmd.Run(a.rt, rest, os.Stdout)
+		return swarmcommand.Run(a.rt, rest, os.Stdout)
 	default:
 		return a.rt.Tmux(append([]string{cmd}, rest...)...)
 	}
@@ -77,12 +77,12 @@ func (a App) runGroup(args []string) error {
 	switch subcmd {
 	case "ls", "list":
 		if has(args, "--json") {
-			return groupcmd.ListJSON(a.rt, os.Stdout)
+			return group.ListJSON(a.rt, os.Stdout)
 		}
 		return a.rt.Shell(append([]string{"group", subcmd}, args...)...)
 	case "status":
 		if len(args) >= 2 && args[1] == "--json" {
-			return groupcmd.StatusJSON(a.rt, args[0], os.Stdout)
+			return group.StatusJSON(a.rt, args[0], os.Stdout)
 		}
 		return a.rt.Shell(append([]string{"group", subcmd}, args...)...)
 	case "kill":

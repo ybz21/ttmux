@@ -1,4 +1,4 @@
-package envcmd
+package env
 
 import (
 	"encoding/json"

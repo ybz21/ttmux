@@ -1,4 +1,4 @@
-package sessioncmd
+package session
 
 import (
 	"encoding/json"

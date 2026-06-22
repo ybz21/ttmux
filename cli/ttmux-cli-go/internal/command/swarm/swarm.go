@@ -1,11 +1,11 @@
-package swarmcmd
+package swarm
 
 import (
 	"fmt"
 	"io"
 
-	"ttmux-cli-go/internal/core"
 	"ttmux-cli-go/internal/runtime"
+	swarmcore "ttmux-cli-go/internal/swarm"
 )
 
 func Run(rt runtime.Runtime, args []string, w io.Writer) error {
@@ -20,7 +20,7 @@ func Run(rt runtime.Runtime, args []string, w io.Writer) error {
 			return fmt.Errorf("usage: ttmux swarm status <name> [--json]")
 		}
 		if len(args) > 1 && args[1] == "--json" {
-			out, err := core.StatusJSON(args[0], core.Options{
+			out, err := swarmcore.StatusJSON(args[0], swarmcore.Options{
 				HomeDir: rt.HomeDir,
 				DataDir: rt.DataDir,
 				TmuxBin: rt.TmuxBin,
