@@ -456,12 +456,12 @@ function Topology({ detail, swarm, cards, posts, focus, onNode }: {
                           <span>{nodeStatus(n, t)}</span>
                         </div>
                         <div className="swarm-office-surface">
-                          <div className="swarm-office-monitor"><span>{n.mkind || 'agent'}</span></div>
+                          <div className={`swarm-office-monitor is-${screenKind(n)}`}><span>{n.mkind || 'agent'}</span></div>
                           <div className="swarm-office-tower" />
                           <div className="swarm-office-keyboard" />
                         </div>
                         <div className="swarm-office-chair">
-                          <div className="swarm-office-agent"><i /><em /></div>
+                          <div className={`swarm-office-agent hair-${memberHairStyle(n)}`} style={{ ['--hair-color' as any]: memberHairColor(n) }}><span /><i /><em /></div>
                         </div>
                         <div className="swarm-office-shadow" />
                         <div className="swarm-office-stats">
@@ -519,10 +519,25 @@ function OfficeBackdrop({ w, h, title }: { w: number; h: number; title: string }
 }
 
 const MEMBER_COLORS = ['#58a6ff', '#3fb950', '#d2a8ff', '#39c5cf', '#ff7b72', '#f2cc60', '#a5d6ff', '#db6d28']
-function memberColor(name: string) {
+const MEMBER_HAIR_COLORS = ['#f2cc60', '#58a6ff', '#d2a8ff']
+function stableIndex(name: string, mod: number) {
   let h = 0
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
-  return MEMBER_COLORS[h % MEMBER_COLORS.length]
+  return h % mod
+}
+function memberColor(name: string) {
+  return MEMBER_COLORS[stableIndex(name, MEMBER_COLORS.length)]
+}
+function memberHairColor(n: any) {
+  if (n.role === 'leader' || isLeaderRole(n.mrole)) return '#3fb950'
+  return MEMBER_HAIR_COLORS[stableIndex(n.name || '', MEMBER_HAIR_COLORS.length)]
+}
+function memberHairStyle(n: any) {
+  if (n.role === 'leader' || isLeaderRole(n.mrole)) return 'leader'
+  return String(stableIndex(n.name || '', 3))
+}
+function screenKind(n: any) {
+  return n.mkind === 'codex' ? 'codex' : 'claude'
 }
 function nodeColor(n: any) {
   const kind = n.kind
