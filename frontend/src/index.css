@@ -349,105 +349,108 @@ body {
 .swarm-office-agent {
   position: absolute;
   left: 50%;
-  top: -22px;
-  width: 58px;
-  height: 58px;
+  top: -18px;
+  width: 48px;
+  height: 56px;
   transform: translateX(-50%);
-  border-radius: 44% 48% 50% 46%;
-  background: #05070a;
+  border-radius: 50% 50% 44% 44%;
+  background:
+    radial-gradient(circle at 50% 30%, #080b10 0 17px, transparent 18px),
+    linear-gradient(180deg, transparent 0 31px, #080b10 32px 100%);
   box-shadow: 0 0 0 2px rgba(255,255,255,.08), 0 8px 12px rgba(1,4,9,.18);
   animation: swarm-office-agent-breathe 3.2s ease-in-out infinite;
 }
 .swarm-office-agent span {
   display: block;
   position: absolute;
-  left: 7px;
-  right: 7px;
-  top: -10px;
-  height: 22px;
+  left: 8px;
+  right: 8px;
+  top: -6px;
+  height: 15px;
   z-index: 2;
-  border-radius: 16px 16px 7px 7px;
+  border-radius: 12px 12px 5px 5px;
   background: linear-gradient(180deg, color-mix(in srgb, var(--hat-color) 84%, white), var(--hat-color));
-  box-shadow: inset 0 -3px 0 rgba(1, 4, 9, .18);
+  box-shadow: inset 0 -2px 0 rgba(1, 4, 9, .18);
 }
 .swarm-office-agent span::after {
   content: "";
   position: absolute;
-  left: 28px;
-  bottom: -4px;
-  width: 25px;
-  height: 8px;
+  left: 22px;
+  bottom: -3px;
+  width: 20px;
+  height: 6px;
   border-radius: 0 999px 999px 0;
   background: var(--hat-color);
   box-shadow: 0 2px 0 rgba(1, 4, 9, .18);
 }
 .swarm-office-agent.hat-leader span {
-  left: 5px;
-  right: 5px;
-  top: -13px;
-  height: 23px;
-  border-radius: 8px 8px 11px 11px;
+  left: 7px;
+  right: 7px;
+  top: -8px;
+  height: 17px;
+  border-radius: 7px 7px 9px 9px;
   background:
     linear-gradient(135deg, transparent 0 16%, color-mix(in srgb, var(--hat-color) 88%, white) 17% 32%, transparent 33% 40%, color-mix(in srgb, var(--hat-color) 95%, white) 41% 60%, transparent 61% 68%, color-mix(in srgb, var(--hat-color) 88%, white) 69% 84%, transparent 85%),
     linear-gradient(180deg, color-mix(in srgb, var(--hat-color) 84%, white), var(--hat-color));
 }
 .swarm-office-agent.hat-leader span::after {
-  left: 9px;
-  right: 9px;
-  bottom: -4px;
+  left: 7px;
+  right: 7px;
+  bottom: -3px;
   width: auto;
-  height: 7px;
+  height: 5px;
   border-radius: 999px;
 }
 .swarm-office-agent.hat-1 span {
-  left: 4px;
-  right: 11px;
-  top: -9px;
-  height: 21px;
+  left: 6px;
+  right: 10px;
+  top: -6px;
+  height: 15px;
   border-radius: 50% 44% 34% 38%;
   transform: rotate(-8deg);
 }
 .swarm-office-agent.hat-1 span::after {
-  left: 31px;
+  left: 25px;
   bottom: -2px;
-  width: 20px;
+  width: 16px;
 }
 .swarm-office-agent.hat-2 span {
-  left: 11px;
+  left: 10px;
   right: 7px;
-  top: -12px;
-  height: 24px;
-  border-radius: 14px 14px 10px 10px;
+  top: -8px;
+  height: 17px;
+  border-radius: 11px 11px 8px 8px;
 }
 .swarm-office-agent.hat-2 span::after {
-  left: 5px;
-  bottom: -5px;
-  width: 38px;
-  height: 6px;
+  left: 4px;
+  bottom: -4px;
+  width: 30px;
+  height: 5px;
   border-radius: 999px;
 }
 .swarm-office-agent::before,
 .swarm-office-agent::after {
   content: "";
   position: absolute;
-  top: -5px;
-  width: 18px;
-  height: 24px;
+  top: 31px;
+  width: 13px;
+  height: 22px;
   background: #05070a;
-  clip-path: polygon(50% 0, 100% 100%, 0 74%);
+  border-radius: 999px;
 }
-.swarm-office-agent::before { left: 8px; transform: rotate(-18deg); }
-.swarm-office-agent::after { right: 8px; transform: rotate(18deg); }
+.swarm-office-agent::before { left: 2px; transform: rotate(16deg); }
+.swarm-office-agent::after { right: 2px; transform: rotate(-16deg); }
 .swarm-office-agent i,
 .swarm-office-agent em {
   position: absolute;
-  top: 37px;
-  width: 24px;
-  height: 34px;
+  top: 47px;
+  width: 10px;
+  height: 22px;
   background: #05070a;
+  border-radius: 999px;
 }
-.swarm-office-agent i { left: -13px; transform: rotate(18deg); }
-.swarm-office-agent em { right: -13px; transform: rotate(-18deg); }
+.swarm-office-agent i { left: 11px; transform: rotate(10deg); }
+.swarm-office-agent em { right: 11px; transform: rotate(-10deg); }
 .swarm-office-shadow {
   position: absolute;
   left: 22px;
