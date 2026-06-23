@@ -17,6 +17,8 @@ type MemberSpec struct {
 	Perm    string
 	Kind    string // claude | codex
 	Role    string // leader | member
+	Subrole string // 细分角色 key: pm|architect|frontend|backend|qa|… (自定义原样)
+	Duty    string // 长期职责（负责哪一块/产出标准）
 }
 
 // SwarmRow is one swarm in the registry listing.
@@ -139,12 +141,12 @@ func (s *Store) AddMemberRow(swarm string, m MemberSpec) error {
 		return err
 	}
 	defer db.Close()
-	_, err = db.Exec(`INSERT INTO members(name,type,task,workdir,model,perm,kind,role,pending,done)
-		VALUES(?,?,?,?,?,?,?,?,0,0)
+	_, err = db.Exec(`INSERT INTO members(name,type,task,workdir,model,perm,kind,role,subrole,duty,pending,done)
+		VALUES(?,?,?,?,?,?,?,?,?,?,0,0)
 		ON CONFLICT(name) DO UPDATE SET type=excluded.type,task=excluded.task,
 			workdir=excluded.workdir,model=excluded.model,perm=excluded.perm,
-			kind=excluded.kind,role=excluded.role,pending=0`,
-		m.Name, m.Type, m.Task, m.Workdir, m.Model, m.Perm, m.Kind, m.Role)
+			kind=excluded.kind,role=excluded.role,subrole=excluded.subrole,duty=excluded.duty,pending=0`,
+		m.Name, m.Type, m.Task, m.Workdir, m.Model, m.Perm, m.Kind, m.Role, SubroleNorm(m.Subrole), m.Duty)
 	return err
 }
 
@@ -155,12 +157,12 @@ func (s *Store) SetPending(swarm string, m MemberSpec) error {
 		return err
 	}
 	defer db.Close()
-	_, err = db.Exec(`INSERT INTO members(name,type,task,workdir,model,perm,kind,role,pending)
-		VALUES(?,?,?,?,?,?,?,?,1)
+	_, err = db.Exec(`INSERT INTO members(name,type,task,workdir,model,perm,kind,role,subrole,duty,pending)
+		VALUES(?,?,?,?,?,?,?,?,?,?,1)
 		ON CONFLICT(name) DO UPDATE SET type=excluded.type,task=excluded.task,
 			workdir=excluded.workdir,model=excluded.model,perm=excluded.perm,
-			kind=excluded.kind,role=excluded.role,pending=1`,
-		m.Name, m.Type, m.Task, m.Workdir, m.Model, m.Perm, m.Kind, RoleNorm(m.Role))
+			kind=excluded.kind,role=excluded.role,subrole=excluded.subrole,duty=excluded.duty,pending=1`,
+		m.Name, m.Type, m.Task, m.Workdir, m.Model, m.Perm, m.Kind, RoleNorm(m.Role), SubroleNorm(m.Subrole), m.Duty)
 	return err
 }
 
@@ -205,9 +207,10 @@ func (s *Store) pendingSpec(swarm, member string) (MemberSpec, error) {
 	defer db.Close()
 	m := MemberSpec{Name: member}
 	err = db.QueryRow(`SELECT IFNULL(type,'agent'),IFNULL(task,''),IFNULL(workdir,''),
-		IFNULL(model,''),IFNULL(perm,''),IFNULL(kind,'claude'),IFNULL(role,'member')
+		IFNULL(model,''),IFNULL(perm,''),IFNULL(kind,'claude'),IFNULL(role,'member'),
+		IFNULL(subrole,''),IFNULL(duty,'')
 		FROM members WHERE name=?`, member).
-		Scan(&m.Type, &m.Task, &m.Workdir, &m.Model, &m.Perm, &m.Kind, &m.Role)
+		Scan(&m.Type, &m.Task, &m.Workdir, &m.Model, &m.Perm, &m.Kind, &m.Role, &m.Subrole, &m.Duty)
 	return m, err
 }
 

@@ -32,7 +32,7 @@ const displayPostText = (text: string) => text.replace(/(^|\s)@master\b/g, '$1@l
 const memberNodeKind = (m: Member) => m.done ? 'done' : ['running', 'idle', 'waiting', 'done'].includes(m.status) ? m.status : 'exited'
 
 interface SwarmRow { id: string; name: string; goal: string; status: string; supervisor: string; created: string; total: number; alive: number; pending: number }
-interface Member { name: string; type: string; task: string; deps: string; done: number; status: string; session: string; kind?: string; role?: string }
+interface Member { name: string; type: string; task: string; deps: string; done: number; status: string; session: string; kind?: string; role?: string; subrole?: string; duty?: string }
 interface Pending { name: string; deps: string }
 interface Detail { name: string; goal: string; status: string; supervisor: string; created: string; leader_last_post?: number; members: Member[]; pending: Pending[]; done_marked: string[] }
 interface Post { id: number; ts: string; author: string; kind: string; re: number | null; text: string }
@@ -343,14 +343,15 @@ function AddMemberModal({ open, name, members, onClose, onDone }: { open: boolea
   const [mname, setMname] = useState(''); const [task, setTask] = useState(''); const [type, setType] = useState('agent')
   const [deps, setDeps] = useState<string[]>([]); const [dir, setDir] = useState(''); const [busy, setBusy] = useState(false)
   const [kind, setKind] = useState('claude') // 引擎: claude(默认) | codex
-  useEffect(() => { if (open) { setMname(''); setTask(''); setType('agent'); setDeps([]); setDir(''); setKind('claude') } }, [open])
+  const [subrole, setSubrole] = useState<string | undefined>(undefined); const [duty, setDuty] = useState('') // 细分角色 + 职责
+  useEffect(() => { if (open) { setMname(''); setTask(''); setType('agent'); setDeps([]); setDir(''); setKind('claude'); setSubrole(undefined); setDuty('') } }, [open])
   const willBeLeader = type === 'agent' && members.length === 0 // 首个 agent 成员 → leader（最终由后端按真实状态裁定）
   const ok = async () => {
     if (!mname.trim()) return message.error(t('swarm.memberNameRequired'))
     if (!task.trim()) return message.error(type === 'agent' ? t('task.descriptionRequired') : t('swarm.commandRequired'))
     setBusy(true)
     try {
-      await api('POST', `/swarms/${encodeURIComponent(name)}/members`, { name: mname.trim(), type, task: task.trim(), deps: deps.join(','), dir: dir.trim(), kind })
+      await api('POST', `/swarms/${encodeURIComponent(name)}/members`, { name: mname.trim(), type, task: task.trim(), deps: deps.join(','), dir: dir.trim(), kind, subrole: subrole || '', duty: duty.trim() })
       message.success(deps.length ? t('swarm.memberPending', { member: mname }) : t('swarm.memberStarted', { member: mname }))
       onClose(); onDone()
     } catch (e: any) { message.error(e.message) } finally { setBusy(false) }
@@ -372,6 +373,12 @@ function AddMemberModal({ open, name, members, onClose, onDone }: { open: boolea
           </div>
         )}
         <Input placeholder={t('swarm.memberNamePlaceholder')} value={mname} onChange={(e) => setMname(e.target.value)} autoFocus />
+        {type === 'agent' && (
+          <Select showSearch allowClear style={{ width: '100%' }} placeholder={t('swarm.subrolePlaceholder')} value={subrole}
+            onChange={(v) => setSubrole(v)} optionFilterProp="label"
+            options={SUBROLES.filter((s) => s.key !== 'commander').map((s) => ({ value: s.key, label: `${s.icon} ${subroleText(t, s.key)}` }))} />
+        )}
+        {type === 'agent' && <Input.TextArea rows={2} placeholder={t('swarm.dutyPlaceholder')} value={duty} onChange={(e) => setDuty(e.target.value)} />}
         <Input.TextArea rows={2} placeholder={type === 'agent' ? t('swarm.taskPlaceholder') : t('swarm.shellCommand')} value={task} onChange={(e) => setTask(e.target.value)} />
         {type === 'agent' && <Input placeholder={t('swarm.workdirPlaceholder')} value={dir} onChange={(e) => setDir(e.target.value)} />}
         <div>
@@ -522,10 +529,11 @@ function Topology({ detail, swarm, cards, posts, focus, onNode }: {
                   <foreignObject x={n.x} y={n.y - labelPad} width={n.w} height={n.h + labelPad} style={{ overflow: 'visible' }}>
                     <div style={{ height: '100%', paddingTop: labelPad, boxSizing: 'border-box' }}>
                     {view === 'office' ? (
-                      <div className={`swarm-office-desk ${n.w < 220 ? 'is-compact' : ''} ${running ? 'is-running' : ''} ${n.kind === 'idle' ? 'is-idle' : ''} ${n.kind === 'waiting' ? 'is-waiting' : ''}`} style={{ ['--node-accent' as any]: col }}>
+                      <div className={`swarm-office-desk ${n.w < 220 ? 'is-compact' : ''} ${running ? 'is-running' : ''} ${n.kind === 'idle' ? 'is-idle' : ''} ${n.kind === 'waiting' ? 'is-waiting' : ''}`} style={{ ['--node-accent' as any]: col }} title={n.mduty || undefined}>
                         <div className="swarm-office-label">
                           <b>{isLeaderRole(n.mrole) ? `◆ ${n.name}` : n.name}</b>
-                          <span>{nodeStatus(n, t)}</span>
+                          {subroleKey(n) && <span className="swarm-office-role" style={{ ['--role-color' as any]: memberHatColor(n) }}>{(SUBROLE_MAP[subroleKey(n)!]?.icon || '👤')} {subroleText(t, subroleKey(n))}</span>}
+                          <span className="swarm-office-status">{nodeStatus(n, t)}</span>
                         </div>
                         <div className="swarm-office-surface">
                           <div className={`swarm-office-monitor is-${screenKind(n)}`}><span>{n.mkind || 'agent'}</span></div>
@@ -549,10 +557,11 @@ function Topology({ detail, swarm, cards, posts, focus, onNode }: {
                           <span className="swarm-node-status">{nodeStatus(n, t)}</span>
                         </div>
                         <div className="swarm-node-meta">
-                          <span>{nodeRole(n, t)}</span>
+                          {subroleKey(n) ? <span style={{ color: memberHatColor(n) }}>{(SUBROLE_MAP[subroleKey(n)!]?.icon || '👤')} {subroleText(t, subroleKey(n))}</span> : <span>{nodeRole(n, t)}</span>}
                           {n.mkind && <span>{n.mkind}</span>}
                           {n.session && <span>{n.session}</span>}
                         </div>
+                        {n.mduty && <div className="swarm-node-task" style={{ color: C.fg2 }}>{n.mduty}</div>}
                         {n.task && <div className="swarm-node-task">{n.task}</div>}
                         <div className="swarm-node-foot">
                           <span>{t('swarm.nodeCardsShort', { count: assigned.length })}</span>
@@ -600,11 +609,41 @@ function stableIndex(name: string, mod: number) {
 function memberColor(name: string) {
   return MEMBER_COLORS[stableIndex(name, MEMBER_COLORS.length)]
 }
+// ── 细分角色注册表（key→图标/配色/帽形），对齐后端 subroles.go 与设计文档 §3 ──
+// 帽形 cap=鸭舌(工程/前端) round=圆顶(产品/审查) flat=平顶(测试/运维)；leader 王冠。
+const SUBROLES: { key: string; icon: string; color: string; hat: string }[] = [
+  { key: 'pm', icon: '🧭', color: '#39c5cf', hat: 'round' },
+  { key: 'architect', icon: '🏛', color: '#d2a8ff', hat: 'round' },
+  { key: 'frontend', icon: '🎨', color: '#ff9bce', hat: 'cap' },
+  { key: 'backend', icon: '⚙️', color: '#58a6ff', hat: 'cap' },
+  { key: 'fullstack', icon: '🛠', color: '#7ee787', hat: 'cap' },
+  { key: 'qa', icon: '🧪', color: '#d29922', hat: 'flat' },
+  { key: 'designer', icon: '✏️', color: '#f0883e', hat: 'round' },
+  { key: 'reviewer', icon: '🔍', color: '#a5d6ff', hat: 'round' },
+  { key: 'devops', icon: '🚢', color: '#56d4dd', hat: 'flat' },
+  { key: 'docs', icon: '📝', color: '#8b949e', hat: 'flat' },
+  { key: 'commander', icon: '◆', color: '#f85149', hat: 'leader' },
+]
+const SUBROLE_MAP: Record<string, { key: string; icon: string; color: string; hat: string }> = Object.fromEntries(SUBROLES.map((s) => [s.key, s]))
+// 解析节点的细分角色 key：leader → commander；否则取成员 msubrole（自定义 key 也透传）
+function subroleKey(n: any): string | undefined {
+  if (n.role === 'leader' || isLeaderRole(n.mrole)) return 'commander'
+  return n.msubrole || undefined
+}
+// 细分角色展示文案：枚举走 i18n，自定义原样返回
+function subroleText(t: T, key?: string): string {
+  if (!key) return ''
+  return SUBROLE_MAP[key] ? t(('swarm.subrole.' + key) as any) : key
+}
 function memberHatColor(n: any) {
+  const sr = SUBROLE_MAP[subroleKey(n) || '']
+  if (sr) return sr.color
   if (n.role === 'leader' || isLeaderRole(n.mrole)) return '#f85149'
   return MEMBER_HAT_COLORS[stableIndex(n.name || '', MEMBER_HAT_COLORS.length)]
 }
 function memberHatStyle(n: any) {
+  const sr = SUBROLE_MAP[subroleKey(n) || '']
+  if (sr) return sr.hat
   if (n.role === 'leader' || isLeaderRole(n.mrole)) return 'leader'
   return String(stableIndex(n.name || '', 3))
 }
@@ -651,13 +690,14 @@ function buildLayout(detail: Detail | null, swarm: string, compact = false) {
   const TOP = compact ? 8 : 14
   const MASTER_H = compact ? 124 : 154
   if (!detail) return { nodes: [], edges: [], w: 400, h: 280 }
-  type N = { name: string; role: 'leader' | 'member' | 'pending'; kind: string; deps: string; session: string; task?: string; x: number; y: number; w: number; h: number; mrole?: string; mkind?: string }
+  type N = { name: string; role: 'leader' | 'member' | 'pending'; kind: string; deps: string; session: string; task?: string; x: number; y: number; w: number; h: number; mrole?: string; mkind?: string; msubrole?: string; mduty?: string }
   // leader 顶点优先用 role=leader 的成员（它从分层行里排除，只在顶部画一次）
   const masterMember = detail.members.find((m) => isLeaderRole(m.role))
   const members = detail.members.filter((m) => m !== masterMember).map((m) => ({
     name: m.name, role: 'member' as const, deps: m.deps, session: m.session, task: m.task,
     kind: memberNodeKind(m),
     mrole: m.role, mkind: m.kind, // 成员级 角色(master/worker) 与 引擎(claude/codex)
+    msubrole: m.subrole, mduty: m.duty, // 细分角色 + 职责
   }))
   const pendings = detail.pending.map((p) => ({ name: p.name, role: 'pending' as const, deps: p.deps, session: `${swarm}-${p.name}`, kind: 'pending' }))
   const all = [...members, ...pendings]
@@ -684,7 +724,7 @@ function buildLayout(detail: Detail | null, swarm: string, compact = false) {
   const masterName = masterMember ? masterMember.name : detail.supervisor
   if (masterName) {
     const mk = masterMember ? memberNodeKind(masterMember) : 'leader'
-    nodes.push({ name: masterName, role: 'leader', kind: mk, deps: '', session: masterMember ? masterMember.session : detail.supervisor, task: masterMember?.task || detail.goal, x: w / 2 - NW / 2, y: TOP, w: NW, h: MASTER_H, mkind: masterMember?.kind })
+    nodes.push({ name: masterName, role: 'leader', kind: mk, deps: '', session: masterMember ? masterMember.session : detail.supervisor, task: masterMember?.task || detail.goal, x: w / 2 - NW / 2, y: TOP, w: NW, h: MASTER_H, mkind: masterMember?.kind, msubrole: masterMember?.subrole || 'commander', mduty: masterMember?.duty })
   }
   layerKeys.forEach((k, li) => {
     const row = layers[k]
@@ -950,12 +990,18 @@ function NodeDrawer({ swarm, member, detail, cards, posts, openTerm, onClose, on
   const color = isMaster ? C.magenta : pend ? C.amber : m?.done ? C.green : m?.status === 'running' ? C.green : m?.status === 'idle' ? C.blue : m?.status === 'waiting' ? C.amber : C.fg2
   const tagStatus = m?.done ? 'done' : (m?.status || 'exited')
   const tagColor = tagStatus === 'running' ? 'processing' : tagStatus === 'idle' ? 'blue' : tagStatus === 'waiting' ? 'warning' : tagStatus === 'done' ? 'success' : 'default'
+  // 细分角色：leader → commander；否则成员 subrole（自定义 key 透传）
+  const srKey = isMaster ? 'commander' : (m?.subrole || undefined)
+  const srInfo = srKey ? SUBROLE_MAP[srKey] : undefined
+  const srColor = srInfo?.color || C.fg2
+  const srIcon = srInfo?.icon || '👤'
 
   return (
     <Drawer open={!!member} onClose={onClose} width={drawerW} title={
       <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <i style={{ width: 8, height: 8, borderRadius: '50%', background: color }} />
         <b>{member}</b>
+        {srKey && <Tag bordered style={{ color: srColor, borderColor: srColor + '88', background: srColor + '18' }}>{srIcon} {subroleText(t, srKey)}</Tag>}
         {isMaster ? <Tag color="blue">{t('swarm.master')}</Tag> : pend ? <Tag color="warning">{t('swarm.pending')}</Tag> : <Tag color={tagColor}>{nodeStatus({ kind: tagStatus }, t)}</Tag>}
       </span>
     }>
@@ -963,7 +1009,7 @@ function NodeDrawer({ swarm, member, detail, cards, posts, openTerm, onClose, on
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
           <div>
             <div style={{ color: C.fg2, fontSize: 12, marginBottom: 4 }}>{t('swarm.identity')}</div>
-            <div style={{ fontSize: 13 }}>{isMaster ? t('swarm.master') : `${m?.type || 'agent'} · ${t('swarm.member')}`} · {t('common.terminal')} <b>{session}</b></div>
+            <div style={{ fontSize: 13 }}>{isMaster ? t('swarm.master') : `${m?.type || 'agent'} · ${t('swarm.member')}`}{srKey && <> · {srIcon} {subroleText(t, srKey)}</>} · {t('common.terminal')} <b>{session}</b></div>
             {(m?.deps || pend?.deps) && <div style={{ fontSize: 12, color: C.fg3, marginTop: 4 }}>{t('swarm.depsArrow')} {m?.deps || pend?.deps}</div>}
             <Space wrap style={{ marginTop: 10 }}>
               <Button size="small" type="primary" onClick={() => { openTerm(session); onClose() }}>{t('swarm.openTerminal')} ↗</Button>
@@ -979,6 +1025,12 @@ function NodeDrawer({ swarm, member, detail, cards, posts, openTerm, onClose, on
               ) : <Tag color="success">✔ {t('swarm.doneMarked')}</Tag>)}
             </Space>
           </div>
+          {m?.duty && (
+            <div>
+              <div style={{ color: C.fg2, fontSize: 12, marginBottom: 6 }}>{t('swarm.duty')}</div>
+              <div style={{ background: srColor + '14', border: `1px solid ${srColor}44`, borderRadius: 8, padding: '9px 12px', fontSize: 13 }}>{m.duty}</div>
+            </div>
+          )}
           {initCmd && (
             <div>
               <div style={{ color: C.fg2, fontSize: 12, marginBottom: 6 }}>{t('swarm.initialInstruction')}</div>

@@ -42,6 +42,8 @@ type SwarmMember struct {
 	Done    int    `json:"done"`
 	Kind    string `json:"kind"`
 	Role    string `json:"role"`
+	Subrole string `json:"subrole"`
+	Duty    string `json:"duty"`
 	Status  string `json:"status"`
 	Session string `json:"session"`
 }
@@ -229,7 +231,8 @@ func Status(name string, opt Options) (*SwarmStatus, error) {
 	}
 
 	rows, err := db.Query(`SELECT name, IFNULL(type,'agent'), IFNULL(task,''), IFNULL(deps,''), IFNULL(done,0), IFNULL(kind,'claude'),
-		CASE IFNULL(role,'member') WHEN 'master' THEN 'leader' WHEN 'worker' THEN 'member' ELSE IFNULL(role,'member') END
+		CASE IFNULL(role,'member') WHEN 'master' THEN 'leader' WHEN 'worker' THEN 'member' ELSE IFNULL(role,'member') END,
+		IFNULL(subrole,''), IFNULL(duty,'')
 		FROM members WHERE IFNULL(pending,0)=0 ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -237,7 +240,7 @@ func Status(name string, opt Options) (*SwarmStatus, error) {
 	defer rows.Close()
 	for rows.Next() {
 		var m SwarmMember
-		if err := rows.Scan(&m.Name, &m.Type, &m.Task, &m.Deps, &m.Done, &m.Kind, &m.Role); err != nil {
+		if err := rows.Scan(&m.Name, &m.Type, &m.Task, &m.Deps, &m.Done, &m.Kind, &m.Role, &m.Subrole, &m.Duty); err != nil {
 			return nil, err
 		}
 		m.Session = meta.Name + "-" + m.Name
@@ -320,6 +323,16 @@ func migrateSwarmDB(db *sql.DB) error {
 	}
 	if !cols["role"] {
 		if _, err := db.Exec(`ALTER TABLE members ADD COLUMN role TEXT DEFAULT 'member'`); err != nil {
+			return err
+		}
+	}
+	if !cols["subrole"] {
+		if _, err := db.Exec(`ALTER TABLE members ADD COLUMN subrole TEXT DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	if !cols["duty"] {
+		if _, err := db.Exec(`ALTER TABLE members ADD COLUMN duty TEXT DEFAULT ''`); err != nil {
 			return err
 		}
 	}

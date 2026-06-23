@@ -1,13 +1,18 @@
-# {{.Member}} · Member
+# {{.Member}} · {{with .SubroleLabel}}{{.}}{{else}}Member{{end}}
 
 **蜂群**：{{.Swarm}}{{if .Goal}}
-**目标**：{{.Goal}}{{end}}
+**目标**：{{.Goal}}{{end}}{{if .Duty}}
+**职责**：{{.Duty}}{{end}}
 
-## 你的任务
+## 你的起步任务
 
 {{.Task}}
 {{if .Deps}}
 > 依赖：{{.Deps}}（依赖就绪后才轮到你）
+{{end}}{{if .RoleTrait}}
+## 你的工作方式（{{.SubroleLabel}}）
+
+{{.RoleTrait}}
 {{end}}
 ## 协作方式（务必遵循 swarm 格式）
 

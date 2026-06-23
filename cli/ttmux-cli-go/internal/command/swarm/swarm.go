@@ -191,6 +191,10 @@ func cmdAdd(rt runtime.Runtime, st *swarmcore.Store, args []string, w io.Writer)
 			spec.Kind, i = next(rest, i)
 		case "--role":
 			spec.Role, i = next(rest, i)
+		case "--subrole":
+			spec.Subrole, i = next(rest, i)
+		case "--duty":
+			spec.Duty, i = next(rest, i)
 		default:
 			payload = append(payload, rest[i])
 		}

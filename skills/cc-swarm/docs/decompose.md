@@ -36,6 +36,16 @@
 > 若依赖未完成会被自动**挂起为 pending**，不会立刻 spawn。你按任务图把全部成员一次加好即可，
 > 不必手算开工顺序——上游被你 `ttmux swarm done <群> <上游>` 标记完成后，下游自动解锁。详见 patrol.md。
 
+> **给每个成员定细分角色 + 职责**（组班子）：派活时带上 `--subrole` 与 `--duty`：
+> ```bash
+> ttmux swarm add <群> api --type agent \
+>   --subrole backend --duty "实现推演引擎计算与数据接口" \
+>   --depends-on arch "<起步任务>"
+> ```
+> `--subrole` 可选 `pm|architect|frontend|backend|fullstack|qa|designer|reviewer|devops|docs`（也可自定义字符串）；
+> 它决定子会话拿到的**角色化 prompt**（产品偏需求/验收、测试偏用例/回归…），`--duty` 是该成员长期负责的范围。
+> 拆任务时就想清楚"这支班子需要哪些角色"，别一律无差别 member。
+
 > **把任务图落到看板**：拆完后，每个子任务在看板上建一张卡，作为全群可见的分工底账：
 > ```bash
 > t1=$(ttmux swarm task add <群> "认证后端" --desc "注册/登录/JWT")

@@ -14,7 +14,7 @@ import (
 	"text/template"
 )
 
-//go:embed prompts/*.tmpl
+//go:embed prompts/*.tmpl prompts/roles/*.md
 var promptFS embed.FS
 
 // promptCtx 是模板渲染上下文。
@@ -23,6 +23,8 @@ type promptCtx struct {
 	Task, Deps, Workdir, SkillsDir  string
 	MasterName                      string
 	Peers                           []string
+	Subrole, SubroleLabel, Duty     string // 细分角色 key/中文 + 长期职责
+	RoleTrait                       string // prompts/roles/<subrole>.md 渲染前注入（角色工作方式）
 }
 
 // skillsDir 返回 agent 自动加载 skill 的目录（install.sh / start-all.sh 同步到此）。
@@ -35,12 +37,33 @@ func skillsDir() string {
 }
 
 // renderMemberPrompt 按角色选模板并渲染；失败时返回空串（调用方回退到原始任务）。
+// 渲染前把细分角色归一、补 label，并读入 prompts/roles/<key>.md 角色片段 → RoleTrait。
 func renderMemberPrompt(ctx promptCtx) string {
+	if ctx.Subrole != "" {
+		ctx.Subrole = subroleNorm(ctx.Subrole)
+		ctx.SubroleLabel = subroleLabel(ctx.Subrole)
+		ctx.RoleTrait = roleTrait(ctx.Subrole)
+	}
 	name := "worker.md.tmpl"
 	if ctx.Role == "leader" || ctx.Role == "master" {
 		name = "master.md.tmpl"
 	}
 	return renderPrompt(name, ctx)
+}
+
+// roleTrait 读取 prompts/roles/<key>.md（自定义/未命中 → 空串）。
+// 支持 TTMUX_PROMPT_DIR 覆盖；内置嵌入到二进制。
+func roleTrait(key string) string {
+	rel := "prompts/roles/" + key + ".md"
+	if dir := os.Getenv("TTMUX_PROMPT_DIR"); dir != "" {
+		if data, err := os.ReadFile(filepath.Join(dir, "roles", key+".md")); err == nil {
+			return strings.TrimSpace(string(data))
+		}
+	}
+	if data, err := promptFS.ReadFile(rel); err == nil {
+		return strings.TrimSpace(string(data))
+	}
+	return ""
 }
 
 // renderLeaderKickoff 渲染「自动拉起的 Leader」开场白（swarm new / adopt 时用）。

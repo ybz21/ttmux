@@ -86,8 +86,10 @@ func (a *API) SwarmAddMember(c *gin.Context) {
 		Deps  string `json:"deps"`
 		Model string `json:"model"`
 		Perm  string `json:"perm"`
-		Kind  string `json:"kind"` // claude(默认) | codex
-		Role  string `json:"role"` // leader | member（兼容 master | worker，空=后端按"首个 agent 成员→leader"决定）
+		Kind    string `json:"kind"` // claude(默认) | codex
+		Role    string `json:"role"` // leader | member（兼容 master | worker，空=后端按"首个 agent 成员→leader"决定）
+		Subrole string `json:"subrole"` // 细分角色 key（pm/frontend/qa…，自定义原样）
+		Duty    string `json:"duty"`    // 长期职责
 	}
 	if err := c.ShouldBindJSON(&b); err != nil || strings.TrimSpace(b.Name) == "" || strings.TrimSpace(b.Task) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "BAD_REQUEST"}})
@@ -154,6 +156,7 @@ func (a *API) SwarmAddMember(c *gin.Context) {
 			Swarm: n, Goal: st.Goal, Member: b.Name, Role: role, Kind: kind,
 			Task: b.Task, Deps: b.Deps, Workdir: b.Dir, SkillsDir: skillsDir(),
 			MasterName: masterName, Peers: peers,
+			Subrole: b.Subrole, Duty: b.Duty,
 		}); p != "" {
 			task = p
 		}
@@ -162,6 +165,12 @@ func (a *API) SwarmAddMember(c *gin.Context) {
 	args := []string{"swarm", "add", n, b.Name, "--type", typ}
 	if typ == "agent" {
 		args = append(args, "--kind", kind, "--role", role)
+		if b.Subrole != "" {
+			args = append(args, "--subrole", b.Subrole)
+		}
+		if b.Duty != "" {
+			args = append(args, "--duty", b.Duty)
+		}
 	}
 	if b.Dir != "" {
 		args = append(args, "--dir", b.Dir)

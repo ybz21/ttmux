@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 // Store is the swarm data layer: meta.db registry + per-swarm swarm.db.
@@ -157,7 +158,8 @@ func initSwarmDB(db *sql.DB) error {
 			name TEXT PRIMARY KEY, type TEXT, task TEXT, workdir TEXT,
 			status TEXT, deps TEXT, done INT DEFAULT 0, pending INT DEFAULT 0,
 			model TEXT, perm TEXT,
-			kind TEXT DEFAULT 'claude', role TEXT DEFAULT 'member');
+			kind TEXT DEFAULT 'claude', role TEXT DEFAULT 'member',
+			subrole TEXT DEFAULT '', duty TEXT DEFAULT '');
 		CREATE TABLE IF NOT EXISTS posts(
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			ts TEXT, author TEXT, kind TEXT, re INTEGER, text TEXT);
@@ -178,5 +180,38 @@ func RoleNorm(role string) string {
 		return ""
 	default:
 		return role
+	}
+}
+
+// SubroleNorm normalizes a 细分角色 to a canonical registry key (see
+// docs/design/蜂群成员角色模型设计.md §3). Unknown values are kept verbatim
+// (trimmed) as a custom subrole — the UI/prompt fall back to generic handling.
+func SubroleNorm(s string) string {
+	key := strings.ToLower(strings.TrimSpace(s))
+	switch key {
+	case "pm", "product", "产品", "产品经理":
+		return "pm"
+	case "architect", "arch", "架构", "架构师":
+		return "architect"
+	case "frontend", "fe", "front", "前端", "前端工程师":
+		return "frontend"
+	case "backend", "be", "back", "后端", "后端工程师":
+		return "backend"
+	case "fullstack", "full", "全栈", "全栈工程师":
+		return "fullstack"
+	case "qa", "test", "tester", "测试", "测试工程师":
+		return "qa"
+	case "designer", "design", "ui-design", "设计", "设计师":
+		return "designer"
+	case "reviewer", "review", "审查", "代码审查":
+		return "reviewer"
+	case "devops", "ops", "运维":
+		return "devops"
+	case "docs", "doc", "writer", "文档":
+		return "docs"
+	case "commander", "leader", "master", "指挥", "总指挥":
+		return "commander"
+	default:
+		return strings.TrimSpace(s) // 自定义：原样保留
 	}
 }

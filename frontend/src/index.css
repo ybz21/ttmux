@@ -253,6 +253,16 @@ body {
   background: color-mix(in srgb, var(--node-accent) 10%, var(--bg-container));
   font-size: 10px;
 }
+/* 细分角色名牌：色用帽色 --role-color，覆盖上面通用 span 的 accent 配色 */
+.swarm-office-label span.swarm-office-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border-color: color-mix(in srgb, var(--role-color) 55%, transparent);
+  color: var(--role-color);
+  background: color-mix(in srgb, var(--role-color) 12%, var(--bg-container));
+  font-weight: 600;
+}
 .swarm-office-desk.is-compact .swarm-office-label {
   top: -15px;
   gap: 5px;
@@ -528,6 +538,13 @@ body {
   height: 6px;
   border-radius: 999px;
 }
+/* 细分角色帽形：cap=鸭舌(工程/前端) round=圆顶(产品/审查) flat=平顶(测试/运维) */
+.swarm-office-agent.hat-cap span { top: -4px; border-radius: 999px 999px 8px 7px; transform: rotate(-4deg); }
+.swarm-office-agent.hat-cap span::after { left: 24px; bottom: -4px; width: 18px; }
+.swarm-office-agent.hat-round span { top: -6px; height: 15px; border-radius: 10px 10px 7px 7px; }
+.swarm-office-agent.hat-round span::after { left: 20px; bottom: -5px; width: 22px; height: 6px; border-radius: 999px; }
+.swarm-office-agent.hat-flat span { top: -3px; height: 10px; border-radius: 6px 6px 5px 5px; }
+.swarm-office-agent.hat-flat span::after { left: 22px; bottom: -4px; width: 18px; }
 .swarm-office-agent::before,
 .swarm-office-agent::after {
   content: "";
