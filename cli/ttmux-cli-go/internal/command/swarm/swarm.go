@@ -110,7 +110,7 @@ func cmdNew(rt runtime.Runtime, st *swarmcore.Store, args []string, w io.Writer)
 		ui.Warn(w, "蜂群 %s 已存在", ui.Bold(name))
 		return fmt.Errorf("exists")
 	}
-	goal, noMaster := "", false
+	goal, noMaster, dir := "", false, ""
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
 		case "--goal":
@@ -118,9 +118,18 @@ func cmdNew(rt runtime.Runtime, st *swarmcore.Store, args []string, w io.Writer)
 				goal = args[i+1]
 				i++
 			}
+		case "--dir":
+			if i+1 < len(args) {
+				dir = args[i+1]
+				i++
+			}
 		case "--no-master":
 			noMaster = true
 		}
+	}
+	// 指定了工作目录就先建好：Leader 会 cd 进去、上传的文档也落在这里
+	if dir != "" {
+		_ = os.MkdirAll(dir, 0o755)
 	}
 	id, err := st.NewSwarm(name, goal)
 	if err != nil {
@@ -138,7 +147,7 @@ func cmdNew(rt runtime.Runtime, st *swarmcore.Store, args []string, w io.Writer)
 			if !ui.AgentMode() {
 				fmt.Fprintf(w, "   %s拉起 Leader cc-%s …%s\n", ui.P().Dim, name, ui.P().Reset)
 			}
-			_ = adopt(rt, st, name, "", "", w)
+			_ = adopt(rt, st, name, "", dir, w)
 		} else {
 			ui.Info(w, "未检测到 claude，未拉起 Leader；稍后手动: %s", ui.Dim("ttmux swarm adopt "+name))
 		}

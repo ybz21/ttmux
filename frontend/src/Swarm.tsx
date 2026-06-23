@@ -287,7 +287,11 @@ function SwarmDetail({ name, onBack, openTerm, onGone }: { name: string; onBack:
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 2px 12px', flexWrap: 'wrap' }}>
         <a onClick={onBack} style={{ color: C.fg2 }}>← {t('nav.swarm')}</a>
         <span style={{ fontSize: 17, fontWeight: 700 }}>{name}</span>
-        {detail?.goal && <span style={{ color: C.fg2, fontSize: 13 }}>{detail.goal}</span>}
+        {detail?.goal && (
+          <Tooltip title={<div style={{ maxHeight: '60vh', overflow: 'auto', whiteSpace: 'pre-wrap' }}>{detail.goal}</div>} overlayStyle={{ maxWidth: 520 }}>
+            <span style={{ color: C.fg2, fontSize: 13, maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{detail.goal}</span>
+          </Tooltip>
+        )}
         {detail && statusTag(detail.status, t)}
         {detail?.supervisor && <span style={{ color: C.magenta, fontSize: 12 }}>◆ {detail.supervisor}</span>}
         {detail && (
@@ -654,8 +658,9 @@ function buildLayout(detail: Detail | null, swarm: string, compact = false) {
   }))
   const pendings = detail.pending.map((p) => ({ name: p.name, role: 'pending' as const, deps: p.deps, session: `${swarm}-${p.name}`, kind: 'pending' }))
   const all = [...members, ...pendings]
-  // 注意：只有 leader、还没 member 时 all 为空，但仍要把 leader 顶点画出来，不能空返回
-  if (all.length === 0 && !masterMember) return { nodes: [], edges: [], w: 400, h: 280 }
+  // 注意：只有 leader、还没 member 时 all 为空，但仍要把 leader 顶点画出来，不能空返回。
+  // supervisor(cc-<群>) 也是 leader，没有 role=leader 成员时要靠它兜底，否则新建带 Leader 的群看不到任何节点。
+  if (all.length === 0 && !masterMember && !detail.supervisor) return { nodes: [], edges: [], w: 400, h: 280 }
   const byName: Record<string, any> = {}; all.forEach((n) => (byName[n.name] = n))
   const memo: Record<string, number> = {}
   const depth = (name: string, seen = new Set<string>()): number => {

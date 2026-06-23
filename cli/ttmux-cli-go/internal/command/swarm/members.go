@@ -64,6 +64,9 @@ func adopt(rt runtime.Runtime, st *swarmcore.Store, swarm, cc, dir string, w io.
 	if dir == "" {
 		dir = "."
 	}
+	if dir != "." {
+		_ = os.MkdirAll(dir, 0o755)
+	}
 	_ = st.MetaSet(swarm, "supervisor", cc)
 	_ = st.MetaSet(swarm, "status", "running")
 	goal := st.MetaGet(swarm, "goal")
