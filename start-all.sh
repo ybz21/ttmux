@@ -21,7 +21,7 @@ fi
 
 BIND="${TTMUX_WEB_BIND:-0.0.0.0:13579}"
 PORT="${BIND##*:}"
-export TTMUX_BIN="${TTMUX_BIN:-$(pwd)/ttmux}"
+export TTMUX_BIN="${TTMUX_BIN:-ttmux}"   # 系统级 ttmux（install.sh 装到 ~/.local/bin，已在 PATH）
 export TTMUX_WEB_PASSWORD="${TTMUX_WEB_PASSWORD:-BladeAI2026!!}"
 OS="$(uname -s 2>/dev/null || echo unknown)"
 
@@ -86,11 +86,12 @@ case "${1:-}" in
     exec tail -n 100 -f "$LOG" ;;
 esac
 
-# ── 开发模式：把仓库 skills/ 同步到 ~/.claude/skills（生产由 install.sh 装）─
-#   蜂群成员(claude/codex)靠 ~/.claude/skills 自动加载 cc-swarm 协作规范；
-#   开发时没跑 install.sh，这里复用同一套合并逻辑把 skills 拷过去。
-if [ -f skills/sync-skills.sh ]; then
-  bash skills/sync-skills.sh "${TTMUX_SKILLS_DIR:-$HOME/.claude/skills}" || true
+# ── 先安装：构建 ttmux/chrome → ~/.local/bin + 同步 skills + 补全 ──────
+#   ttmux/chrome 是生成物(不入 git)。开发与生产统一走 install.sh 装到系统 PATH，
+#   后端/前端用系统级 `ttmux`(见上 TTMUX_BIN=ttmux)，不依赖仓库根产物。
+if [ -f install.sh ]; then
+  echo "==> 先安装 ttmux + chrome + skills (install.sh)..."
+  bash install.sh || { echo "✘ install.sh 失败"; exit 1; }
 fi
 
 # ── 0. 可选：启动 kanna（Claude Code 精美 UI），并暴露给前端 ─────
@@ -128,19 +129,6 @@ if [ -n "${pids// /}" ]; then
   kill $pids 2>/dev/null || true
   sleep 1
   kill -9 $pids 2>/dev/null || true
-fi
-
-# ── 2.5 编译 ttmux CLI (Go) → ./ttmux ───────────────────────────
-# ttmux 是生成物(已 gitignore)，后端经 TTMUX_BIN=$(pwd)/ttmux 调用它取数据/下命令。
-# 这里增量构建，确保开发时 ./ttmux 总是跟工作区一致(否则界面取不到数据)。
-TTMUX_SRC=cli/ttmux-cli-go
-if [ -d "$TTMUX_SRC/cmd/ttmux-cli-go" ]; then
-  if [ ! -f ttmux ] || [ "$(find "$TTMUX_SRC" -name '*.go' -newer ttmux 2>/dev/null | head -1)" ]; then
-    echo "==> 编译 ttmux CLI (Go) → ./ttmux..."
-    (cd "$TTMUX_SRC" && CGO_ENABLED=0 go build -o ../../ttmux ./cmd/ttmux-cli-go)
-  else
-    echo "==> ttmux CLI 无变更，跳过编译"
-  fi
 fi
 
 # ── 3. 编译后端（增量）──────────────────────────────────────────
