@@ -217,6 +217,7 @@ const zhCN = {
   'file.currentLocation': '当前位置',
   'file.parentDir': '上级目录',
   'file.workingDir': '工作目录',
+  'file.recentDir': '最近打开',
   'file.directory': '目录',
   'file.closePanel': '关闭文件栏',
   'file.back': '后退',

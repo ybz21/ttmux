@@ -217,6 +217,7 @@ const enUS = {
   'file.currentLocation': 'Current location',
   'file.parentDir': 'Parent folder',
   'file.workingDir': 'Working directory',
+  'file.recentDir': 'Recent',
   'file.directory': 'Folder',
   'file.closePanel': 'Close file panel',
   'file.back': 'Back',
