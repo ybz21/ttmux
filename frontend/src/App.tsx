@@ -224,7 +224,10 @@ export default function App() {
   const soloName = tab === 'term' && route.includes('/') ? decodeURIComponent(route.slice(route.indexOf('/') + 1)) : ''
   if (soloName) return <SoloTerminal name={soloName} />
 
-  const openTerm = (name: string) => {
+  const openTerm = (rawName: string) => {
+    // tmux 自身会把 '.' ':' 替换为 '_'，前端也同步净化，
+    // 确保标签名/WebSocket URL 与 tmux 实际 session 名一致。
+    const name = rawName.replace(/[.:]/g, '_')
     setTerms((ts) => (ts.includes(name) ? ts : [...ts, name]))
     setActive(name)
     if (hasSider) { setDockOpen(true); setDockMax(false) } // 桌面：拉出右侧停靠栏（压缩页面到左）
