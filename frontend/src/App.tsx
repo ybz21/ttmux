@@ -19,6 +19,7 @@ import GitPanel from './GitPanel'
 import BrowserView from './BrowserView'
 import Swarm from './Swarm'
 import UpdateBanner from './UpdateBanner'
+import UpgradeBanner from './UpgradeBanner'
 import { useThemeMode } from './theme'
 import { useI18n } from './i18n'
 import { usePwaInstall } from './install'
@@ -329,6 +330,7 @@ export default function App() {
   return (
     <Layout style={{ height: '100dvh', overflow: 'hidden', background: 'var(--bg-base)' }}>
       <UpdateBanner />
+      <UpgradeBanner />
       {hasSider && !dockMax && (
         <Sider collapsible trigger={null} collapsed={collapsed} collapsedWidth={64}
           breakpoint="lg" onBreakpoint={(b) => setCollapsed(b)} width={208} theme={mode}
