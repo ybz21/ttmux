@@ -12,10 +12,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -23,14 +26,64 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// CDPBase 是 Chrome 远程调试根地址，可用环境变量 TTMUX_CHROME_CDP 覆盖。
-var CDPBase = envOr("TTMUX_CHROME_CDP", "http://127.0.0.1:9222")
+// CDPBase 是 Chrome 远程调试根地址。默认 127.0.0.1:9222；端口被占时会自动换一个空闲端口并记录复用。
+// 设了环境变量 TTMUX_CHROME_CDP 则固定用它（不自动换端口）。
+var (
+	cdpFixed = os.Getenv("TTMUX_CHROME_CDP") != ""
+	CDPBase  = envOr("TTMUX_CHROME_CDP", "http://127.0.0.1:9222")
+)
 
 // 仅登记「本进程亲手拉起」的 Chrome，用于退出时回收；附着到已存在的 Chrome 时为 nil，不回收。
 var (
 	procMu sync.Mutex
 	chrome *exec.Cmd
+
+	launchMu   sync.Mutex // 串行化拉起，避免并发/轮询同时各拉一个
+	lastLaunch time.Time  // 上次拉起时刻，做冷却防抖（端口没起来时别每次轮询都重开）
+
+	statusMu sync.Mutex // 保护 lastErr
+	lastErr  string     // 最近一次 ensureChrome 失败原因，供 /browser/health 回显到 UI
 )
+
+func setLastErr(s string) { statusMu.Lock(); lastErr = s; statusMu.Unlock() }
+
+// cdpPort 解析 CDPBase 里的端口；解析失败回落 9222。
+func cdpPort() int {
+	if u, err := url.Parse(CDPBase); err == nil {
+		if _, p, err := net.SplitHostPort(u.Host); err == nil {
+			if n, err := strconv.Atoi(p); err == nil {
+				return n
+			}
+		}
+	}
+	return 9222
+}
+
+// setCDPPort 切到新端口并持久化记录（下次启动优先复用，避免反复换端口开多个 Chrome）。
+func setCDPPort(port int) {
+	CDPBase = fmt.Sprintf("http://127.0.0.1:%d", port)
+	recordPort(port)
+}
+
+// portFree 探测某端口当前是否可监听（被占则 false）。
+func portFree(port int) bool {
+	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
+}
+
+// pickFreePort 让内核分配一个空闲端口。
+func pickFreePort() (int, bool) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, false
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port, true
+}
 
 func envOr(k, d string) string {
 	if v := os.Getenv(k); v != "" {
@@ -70,13 +123,47 @@ type target struct {
 }
 
 // ensureChrome 确保调试端口可用；不可用则尝试拉起一个 Chrome。
+// 关键：串行 + 冷却 + 不重复拉起。否则在 macOS 上若拉起的 Chrome 没能在 9222 就绪，
+// 每次 /browser/tabs 轮询(3s)都会再拉一个；而同 user-data-dir 的 Chrome 是单例，
+// 第二个会把 about:blank 转发给已有实例后退出 → 表现为「不停弹 about:blank 窗口」。
 func ensureChrome() error {
 	if alive() {
 		return nil
 	}
+	launchMu.Lock()
+	defer launchMu.Unlock()
+	if alive() { // 双检：等锁期间别的协程可能已拉起就绪
+		return nil
+	}
+	// 已有本进程拉起的 Chrome 仍在运行，或刚拉起过(冷却内)：不再开新的，给端口一点时间起来。
+	procMu.Lock()
+	running := chrome != nil && chrome.Process != nil
+	procMu.Unlock()
+	if running || time.Since(lastLaunch) < 12*time.Second {
+		for i := 0; i < 30; i++ {
+			if alive() {
+				return nil
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		err := fmt.Errorf("Chrome 启动中或上次未就绪，调试端口 %s 暂未就绪", CDPBase)
+		setLastErr(err.Error())
+		return err
+	}
+
+	// 端口选择：当前端口被别的进程占着（且不是可用 Chrome，否则上面 alive 已 attach）→ 换一个空闲端口，
+	// 并记录复用，避免反复换端口开出多个 Chrome。固定端口模式(TTMUX_CHROME_CDP)不自动换。
+	port := cdpPort()
+	if !cdpFixed && !portFree(port) {
+		if p, ok := pickFreePort(); ok {
+			port = p
+			setCDPPort(port)
+		}
+	}
+
 	cfg := effectiveConfig() // Settings 里存的值 > env > 默认
 	args := []string{
-		"--remote-debugging-port=9222",
+		"--remote-debugging-port=" + strconv.Itoa(port),
 		"--remote-debugging-address=127.0.0.1",
 		"--remote-allow-origins=*",
 		// profile 目录：默认隔离的临时 profile（不带你真实 Chrome 的登录/cookie/扩展）。
@@ -108,19 +195,43 @@ func ensureChrome() error {
 	// 自成进程组：回收时可整组 kill（含 zygote/gpu/renderer/crashpad 等子进程）
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("拉起 Chrome 失败: %w", err)
+		e := fmt.Errorf("拉起 Chrome 失败(可执行路径 %s): %w", exe, err)
+		setLastErr(e.Error())
+		return e
 	}
+	lastLaunch = time.Now()
 	procMu.Lock()
 	chrome = cmd
 	procMu.Unlock()
-	go cmd.Wait()             // 收尸，避免 Chrome 自行退出后留下僵尸
+	// 收尸 + 退出即清空 chrome：让「chrome != nil」可靠表示「我们拉起的实例仍在运行」，
+	// 进程退出后不再被误判为「还在跑」而长期不重拉。
+	go func() {
+		_ = cmd.Wait()
+		procMu.Lock()
+		if chrome == cmd {
+			chrome = nil
+		}
+		procMu.Unlock()
+	}()
 	for i := 0; i < 50; i++ { // 最多等 5s
 		if alive() {
+			setLastErr("") // 就绪：清掉上次错误
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("Chrome 调试端口 %s 未就绪", CDPBase)
+	// 没就绪：区分「进程已退出」(多半 profile 被占/参数不支持/可执行有问题) 与「还在慢启动」
+	procMu.Lock()
+	exited := chrome == nil
+	procMu.Unlock()
+	var e error
+	if exited {
+		e = fmt.Errorf("Chrome 启动后随即退出（常见：profile %q 被你平时的 Chrome 占用，或可执行路径/参数有误）", cfg.Profile)
+	} else {
+		e = fmt.Errorf("Chrome 调试端口 %s 未就绪（启动较慢或端口被防火墙拦）", CDPBase)
+	}
+	setLastErr(e.Error())
+	return e
 }
 
 // Shutdown 回收本进程拉起的 Chrome（整进程组）。附着到外部 Chrome 时为空操作。

@@ -201,6 +201,12 @@ const DownloadIcon = () => (
 const CloseIcon = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
 )
+const EyeIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></svg>
+)
+const EyeOffIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9.9 4.2A10.9 10.9 0 0 1 12 4c6.5 0 10 7 10 7a17.7 17.7 0 0 1-3 3.7" /><path d="M6.6 6.6A17.6 17.6 0 0 0 2 11s3.5 7 10 7a10.6 10.6 0 0 0 4.4-.9" /><path d="m2 2 20 20" /><path d="M9.5 9.5a3 3 0 0 0 4.2 4.2" /></svg>
+)
 const IconButton = ({ title, children, danger, onClick, disabled, width = 24 }: { title: string; children: React.ReactNode; danger?: boolean; onClick?: (e: React.MouseEvent) => void; disabled?: boolean; width?: number | string }) => (
   <Tooltip title={title}>
     <Button type="text" size="small" disabled={disabled} danger={danger} onClick={(e) => { e.stopPropagation(); onClick?.(e) }}
@@ -500,6 +506,7 @@ export default function FileBrowser({
   const [mkdirOpen, setMkdirOpen] = useState(false)
   const [mkdirName, setMkdirName] = useState('')
   const [mkdirBusy, setMkdirBusy] = useState(false)
+  const [showHidden, setShowHidden] = useState(false) // 隐藏文件（点号开头）默认不显示，眼睛开关切换
   const fileRef = useRef<HTMLInputElement>(null)
   const { message, modal } = AntApp.useApp()
   const { t } = useI18n()
@@ -547,6 +554,9 @@ export default function FileBrowser({
   const cur = data?.path || path
   const refresh = () => setTick((t) => t + 1)
   const goUp = () => { if (data && canUp) navigate(data.parent) }
+  // 隐藏文件（点号开头）默认过滤掉；眼睛开关开启后全部显示。
+  const visibleEntries = (data?.entries || []).filter((e) => showHidden || !e.name.startsWith('.'))
+  const hiddenCount = (data?.entries.length || 0) - visibleEntries.length
 
   useEffect(() => {
     setPathDraft(displayPath(cur))
@@ -659,6 +669,7 @@ export default function FileBrowser({
           <IconButton title={t('file.forward')} disabled={!canForward} onClick={goForward}><ForwardIcon /></IconButton>
           <IconButton title={t('file.up')} disabled={!canUp} onClick={goUp}><FolderUpIcon /></IconButton>
           <IconButton title={t('file.refreshDir')} onClick={refresh}><RefreshIcon /></IconButton>
+          <IconButton title={showHidden ? t('file.hideHidden') : t('file.showHidden')} onClick={() => setShowHidden((s) => !s)}>{showHidden ? <EyeIcon /> : <EyeOffIcon />}</IconButton>
           <IconButton title={t('file.newFolder')} disabled={!cur} onClick={() => { setMkdirName(''); setMkdirOpen(true) }}><NewFolderIcon /></IconButton>
           <IconButton title={t('file.uploadHere')} disabled={uploading || !cur} onClick={() => fileRef.current?.click()}>{uploading ? '…' : <UploadIcon />}</IconButton>
         </div>
@@ -695,7 +706,7 @@ export default function FileBrowser({
             <span style={{ color: 'var(--text-dim)' }}>↑</span><span style={{ color: 'var(--text-dim)' }}>{t('file.parentDir')}</span>
           </div>
         )}
-        {data?.entries.map((e) => (
+        {visibleEntries.map((e) => (
           <div key={e.name} className="cc-filerow"
             draggable
             onDragStart={(ev) => {
@@ -735,6 +746,9 @@ export default function FileBrowser({
           </div>
         ))}
         {data && data.entries.length === 0 && <div style={{ color: 'var(--text-dimmer)', fontSize: 12, padding: '6px 10px' }}>{t('file.emptyDirectory')}</div>}
+        {data && data.entries.length > 0 && visibleEntries.length === 0 && (
+          <div style={{ color: 'var(--text-dimmer)', fontSize: 12, padding: '6px 10px' }}>{t('file.allHidden', { count: hiddenCount })}</div>
+        )}
       </div>
       <Modal
         open={mkdirOpen}

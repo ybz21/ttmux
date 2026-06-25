@@ -43,6 +43,11 @@ func utf8Env(env []string) []string {
 	return append(env, "LC_ALL=C.UTF-8")
 }
 
+// SanitizeSessionName 替换 tmux 会话名中的 '.' 和 ':'，避免 -t 解析出错。
+func SanitizeSessionName(name string) string {
+	return strings.NewReplacer(".", "_", ":", "_").Replace(name)
+}
+
 // tmuxScroll 通过 tmux copy-mode 滚动会话的真实历史（attach 用全屏，xterm 本地缓冲为空）。
 func tmuxScroll(name, dir string, lines int) {
 	if lines <= 0 {
@@ -60,6 +65,9 @@ func tmuxScroll(name, dir string, lines int) {
 	}
 }
 
+// tmuxSelectPaneAt 把前端点击的单元格坐标(col,row)映射到所在 pane 并激活它。
+// 因为关掉了 tmux 鼠标模式（保住 xterm 本地拖选复制），点击切换 pane 失效；这里在前端
+// 单击(非拖选)时按坐标补回「点哪个 pane 就切到哪个」。divider 上的点击不命中任何 pane → 忽略。
 func tmuxSelectPaneAt(name string, col, row int) {
 	if col < 0 || row < 0 {
 		return
@@ -106,7 +114,7 @@ var upgrader = websocket.Upgrader{
 
 // Handler 处理 /api/term/:name 的 WebSocket 升级与 PTY 桥接。
 func Handler(c *gin.Context) {
-	name := c.Param("name")
+	name := SanitizeSessionName(c.Param("name"))
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
