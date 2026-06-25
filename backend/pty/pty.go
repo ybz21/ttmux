@@ -65,6 +65,9 @@ func tmuxScroll(name, dir string, lines int) {
 	}
 }
 
+// tmuxSelectPaneAt 把前端点击的单元格坐标(col,row)映射到所在 pane 并激活它。
+// 因为关掉了 tmux 鼠标模式（保住 xterm 本地拖选复制），点击切换 pane 失效；这里在前端
+// 单击(非拖选)时按坐标补回「点哪个 pane 就切到哪个」。divider 上的点击不命中任何 pane → 忽略。
 func tmuxSelectPaneAt(name string, col, row int) {
 	if col < 0 || row < 0 {
 		return

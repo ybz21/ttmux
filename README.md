@@ -1,92 +1,96 @@
 # Roam
 
-> Turn your development machine into an always-on AI coding workstation.
+**English** | [Simplified Chinese](README.zh-CN.md)
 
-[Simplified Chinese](README.zh-CN.md)
+> **Turn your development machine into an always-on AI coding workstation.**
 
-Roam lets you connect back to your development machine from a phone, tablet, or
-laptop, then keep coding, watching logs, running tests, debugging in a browser,
-and supervising Claude Code, Codex, or other AI coding agents from anywhere.
+**Roam** lets you connect back to your own development machine from anywhere,
+at any time, using a phone, tablet, or laptop. You can keep coding, run tests,
+watch logs, debug in a browser, and supervise Claude Code, Codex, or other AI
+coding agents while the real work continues on the development machine.
 
-It solves a concrete problem: **serious software work should not be broken apart
-by device changes, network drops, or long-running agent tasks.** Your code,
-terminals, dev servers, browser, and agents keep running on the development
-machine. Your device is just the control surface.
+It solves a concrete problem: **complex development work should not be broken
+apart by your device, network, or schedule.** Your code, terminals, dev
+services, browser, and agents all keep running on the development machine. You
+can switch devices, disconnect, leave your desk, and come back to the same
+working scene. Unless you close them intentionally, the work on the development
+machine does not disappear because a local terminal exited, a browser tab
+closed, or a laptop lid shut.
 
-The value at a glance:
+**Roam at a glance:**
 
-- **Remote development that keeps its context**: start from SSH, continue in the
-  browser, check progress from a phone, and return without rebuilding the scene.
-- **Long tasks that keep running**: tests, builds, migrations, log watchers,
-  debugging sessions, and agents survive disconnects.
-- **Manageable AI agents**: name Claude Code, Codex, or other agent workers,
-  group them, inspect output, and send follow-up instructions.
-- **Orchestration for complex work**: split a larger goal across tasks and
-  agents with dependencies, a shared board, and a message feed.
+- **Remote development without losing the scene**: check progress from a phone,
+  add instructions from a tablet, take over coding from a laptop, while the
+  working context stays on the development machine.
+- **Long tasks keep running**: tests, builds, migrations, logs, and debugging
+  sessions survive lid closes, network drops, and device changes.
+- **The workspace stays alive**: terminals, services, browser state, and agent
+  conversations remain on the development machine unless you close them.
+- **AI agents become manageable**: Claude Code, Codex, and other agents can be
+  named, grouped, monitored, and given follow-up instructions.
+- **Complex work can be orchestrated**: connect agents and tasks into a goal
+  with dependencies, a board, and a shared message feed.
 
 Roam is not another cloud IDE. It connects to your real development machine and
-puts terminals, browser state, files, tasks, and AI agents into one workspace you
-can control remotely. The UI is a control surface; the work still happens in the
-development environment you already use.
+puts terminals, browser, files, tasks, and AI agents into a remotely controllable
+workspace. What you see is a console; behind it is still the development
+environment and toolchain you already use.
 
 ![Roam Web console](docs/roam-web-console.png)
 
-## The Product Story
+## Core Capabilities
 
-Remote coding is easy when the task is small. It gets painful when the task is
-complex:
+- **Development from any device**: phones, tablets, and laptops can all connect
+  to the same development machine to inspect terminals, logs, tasks, and agent
+  progress.
+- **Context stays intact**: sessions run on the development machine, so you can
+  reconnect to the original working scene after network drops, browser closes,
+  or device changes.
+- **Long tasks continue**: builds, tests, migrations, debugging, log watching,
+  and agent execution can keep running in the background.
+- **Agents are easier to operate**: Claude Code, Codex, and similar tools can be
+  named, grouped, tracked, collected, and given follow-up instructions.
+- **Swarm connects complex tasks**: split one large goal across members, set
+  dependencies, and drive collaboration through a shared board and message feed.
+- **The browser also lives on the development machine**: remote UI debugging,
+  login state, screenshots, and reproduction flows stay in the same workspace.
+- **Built for people and agents together**: humans can take over from the Web
+  console; agents can read state, collect output, and keep pushing work forward.
 
-- the dev server must keep running
-- tests and logs need separate terminals
+## Why It Exists
+
+Remote development is easy for small tasks. Once the work becomes complex, it
+starts to hit many breakpoints:
+
+- dev servers need to keep running
+- tests, logs, and builds need multiple terminals
 - browser state matters for reproducing bugs
-- agents need isolated workspaces and follow-up instructions
-- long-running tasks should survive disconnects
-- you need a way to understand what is still running
+- agents need isolated context and follow-up instructions
+- long tasks should keep running while you are offline
+- you need to quickly understand what is still running
 
-Roam treats the remote machine as the source of truth. The server keeps the work
-alive. The Web console lets you operate it from anywhere. The command-line entry
-point makes sessions, tasks, logs, and agent orchestration scriptable when you
-need automation.
-
-## Server Side: The Remote Workspace
-
-The Roam server is a Go + React Web console that runs on the machine where the
-code lives. It is intentionally thin: it does not invent a second runtime. It
-wraps `ttmux`, `tmux`, Chrome, and the filesystem already on that server.
-
-On the server, Roam provides:
-
-- **Persistent terminal access**: each terminal tab attaches to a real tmux
-  session, so work continues after browser disconnects.
-- **Agent-aware conversations**: when a session is running Claude or Codex, Roam
-  can render the transcript as a readable chat while keeping the raw terminal
-  available.
-- **Swarm dashboard**: large goals can be tracked through members, dependency
-  gates, a shared board, and a message feed.
-- **File operations**: browse, inspect, and upload files next to the active
-  terminal context.
-- **Shared browser**: mirror and control a Chrome instance on the server, useful
-  for UI debugging, login flows, screenshots, and agent-visible browsing.
-- **Security controls**: password login, optional 2FA, login lockout, and a
-  deployment model that works well behind tunnels.
-
-In practice, the server answers: "What is happening on my coding machine right
-now, and how do I control it without being physically there?"
+Roam treats the development machine as the single real working scene. The server
+keeps work alive, and the Web console lets you reconnect from any device. When
+automation is needed, scriptable interfaces expose sessions, tasks, logs, and
+agent orchestration.
 
 ## Typical Use
 
 1. Start Roam on your development machine.
-2. Open the Web console from a phone, tablet, laptop, or another desktop.
-3. Re-enter an existing terminal and continue the same coding context.
-4. Run Claude Code, Codex, or another coding agent on the development machine.
-5. Close your local browser, SSH session, or laptop; the work keeps running.
-6. Come back later from any device to inspect progress, send follow-up
-   instructions, or take over manually.
+2. Open the Web console from a phone, tablet, or another computer.
+3. Enter an existing terminal and continue the previous working scene.
+4. Let Claude Code, Codex, or another agent run long tasks on the development
+   machine.
+5. Leave the browser or close your local terminal; terminals, services, logs,
+   and agents keep running on the development machine.
+6. Come back later from any device to inspect progress, add instructions, or
+   take over coding.
 
-Roam is not mainly a terminal shortcut. It is a persistent workspace for the
-machine where the work actually happens. Terminals, dev servers, logs, browser
-state, coding-agent conversations, and task status do not disappear just because
-your local command line or browser was closed.
+Roam is not mainly "one more terminal tool." It turns the development machine
+into a continuously available workspace. The terminals, running services,
+debugging browser, AI agent conversations, and task state on that machine do not
+vanish just because a local device shut down, SSH disconnected, or a browser tab
+closed.
 
 ## Install And Start
 
@@ -96,89 +100,64 @@ Install the CLI and build the Web console with one line:
 curl -fsSL https://raw.githubusercontent.com/ybz21/ttmux/main/install.sh | bash
 ```
 
-`install.sh` is a thin orchestrator over `scripts/` — a preflight system check
-plus three modules: **[1]** ttmux CLI + skills, **[2]** chrome + Node + Playwright,
-**[3]** the backend build (frontend `dist` + Go binary). It installs `ttmux` and
-`chrome` to `~/.local/bin` and builds the Web console artifacts, but **does not
-start anything**. Run through `curl | bash` it fetches the modules from GitHub on
-demand; inside a clone it sources them locally. `TTMUX_SKIP_BACKEND=1` installs
-only the CLI/chrome.
+`install.sh` is a thin orchestrator over `scripts/`: it runs a system preflight
+check, then three modules: **[1]** ttmux CLI + skills, **[2]** chrome + Node +
+Playwright, and **[3]** backend build (frontend `dist` + Go binary). It installs
+`ttmux` and `chrome` into `~/.local/bin` and builds the artifacts, but **does
+not start any service**. When run through `curl | bash`, it fetches modules from
+GitHub on demand; inside a clone, it sources the local modules directly.
+`TTMUX_SKIP_BACKEND=1` installs only the CLI/chrome parts.
 
-Then start the Web console from a checkout:
+Then start the Web console from the repository:
 
 ```bash
 cp .env.example .env
-./start.sh             # start the built artifacts (no recompile)
-# ./start.sh --dev     # development: rebuild frontend + backend each run
+./start.sh             # start built artifacts directly, without recompiling
+# ./start.sh --dev     # development mode: rebuild frontend + backend each run
 ```
 
-`start.sh` also takes `stop` / `status` / `logs` / `fg`.
+`start.sh` also supports `stop` / `status` / `logs` / `fg`.
 
-By default the Web console listens on `0.0.0.0:13579`, so devices on the same LAN
-can reach it. Change the password before real use:
+By default, the Web console listens on `0.0.0.0:13579`, so devices on the same
+LAN can reach it. Before real use, change the access password in `.env`; for
+remote access, prefer Tailscale, Cloudflare Tunnel, SSH forwarding, or frp.
 
-```dotenv
-TTMUX_WEB_PASSWORD=change-this-to-a-strong-password
-```
+Exposing Roam through **frp with HTTPS** so mobile voice input and clipboard
+continue to work through the tunnel is covered in
+**[docs/deploy/frp.md](docs/deploy/frp.md)** (bilingual).
 
-For remote access, prefer Tailscale, Cloudflare Tunnel, SSH forwarding, or frp.
-Do not expose the Web console directly to the public Internet without a tunnel,
-a strong password, and 2FA.
+Full installation, deployment, remote access, and command-line automation notes
+live in **[docs/install/](docs/install/)**.
 
-Exposing Roam through **frp with HTTPS** — required so mobile voice input and
-clipboard keep working through the tunnel — is covered in
-[docs/deploy/frp.md](docs/deploy/frp.md).
+## For Claude Code / Codex
 
-Full deployment notes are in [docs/install/README.md](docs/install/README.md).
+If Claude Code, Codex, or another command-line coding tool is installed on the
+development machine, run it directly inside a persistent Roam terminal. Its
+execution, output, context, and follow-up channel stay on the development
+machine. When you return from a phone or tablet, you can inspect where it got to
+and add more instructions.
 
-## For Claude Code And Codex
-
-If Claude Code, Codex, or another command-line coding agent is installed on your
-development machine, run it inside a Roam terminal. Its execution, output,
-conversation context, and follow-up channel stay on the development machine.
-You can return from a phone or tablet to inspect progress or add instructions.
-
-For larger goals, Roam can organize multiple task or agent members with a shared
-board, dependency gates, and a message feed. One member can work on the API,
-another on the UI, another on tests, and another on documentation.
+For more complex work, Roam's swarm capability can split the goal across
+multiple members: one can handle the API, one the frontend, one tests, and one
+documentation. A shared board and message feed synchronize progress, and
+dependencies unlock the next step when earlier work is done.
 
 ## Command Line And Automation
 
-Roam also ships command-line tools for scripts, automation, and AI agents. They
-are not the first thing a new user needs to learn; start with the Web console.
+Roam also provides command-line entry points for scripts, automation, and AI
+agents. This is not the main entry point for most users; start from the Web
+console in most cases.
 
-- `ttmux`: persistent sessions, background tasks, agent workers, swarms, and
-  machine-readable status.
-- `chrome`: drives the development machine's browser for UI debugging,
-  screenshots, form flows, and automated checks.
+- `ttmux`: manages persistent sessions, background tasks, agent workers, swarms,
+  and machine-readable state.
+- `chrome`: drives Chrome on the development machine for UI debugging,
+  screenshots, form flows, and automated validation.
 
-Command details live in [docs/install/README.md](docs/install/README.md),
-`ttmux help`, and `chrome help`.
+Command details are intentionally not expanded on the home page, so the README
+does not become a tool manual. When needed, see
+**[docs/install/](docs/install/)**, `ttmux help`, and `chrome help`.
 
-## Repository Layout
-
-```text
-ttmux                    single-file CLI distribution
-chrome                   single-file browser automation distribution
-cli/ttmux-cli/           modular source for ttmux
-cli/chrome-cli/          modular source for chrome
-backend/                 Go + Gin Web backend
-frontend/                React + Vite + Ant Design Web console
-skills/                  Claude Code skills for ttmux and cc-swarm
-docs/                    install and design documentation
-tests/                   smoke and end-to-end checks
-```
-
-Important: do not edit the root `ttmux` or `chrome` files directly unless you are
-intentionally changing the generated distribution files. Edit the modular source
-under `cli/`, then rebuild:
-
-```bash
-bash cli/ttmux-cli/build.sh
-bash cli/chrome-cli/build.sh
-```
-
-## Development
+## Development And Contribution
 
 Install the repository Git hooks once per clone:
 
@@ -221,22 +200,25 @@ CLI smoke test:
 TTMUX=./ttmux bash tests/test_ttmux.sh
 ```
 
-## Security Model
+## Security Notes
 
-Roam intentionally exposes shell, terminal, file, agent, and browser control for
-the machine it runs on. Treat the Web console like SSH access:
+Roam can control your development machine's terminal, files, browser, and
+agents. Treat it as close to SSH access. For real deployments:
 
-- use a strong `TTMUX_WEB_PASSWORD`
-- enable 2FA from the Web console for long-running deployments
-- bind to `127.0.0.1` when using a tunnel
-- avoid direct public exposure
-- run it on a machine/account whose privileges match the risk
+- Use a strong access password, and enable two-factor authentication when
+  needed.
+- Prefer Tailscale, Cloudflare Tunnel, SSH forwarding, or frp for external
+  access.
+- Do not expose the Web console port directly to the public Internet.
+- Run it only on machines and accounts you trust.
 
-## Status
+## Docs
 
-Roam is early and pragmatic. The CLI is a shell script distribution, the Web
-backend is a thin Go wrapper around it, and the UI is optimized for remote coding
-operations rather than for general-purpose server administration.
+- [docs/install/](docs/install/) - installation and deployment
+- [docs/design/](docs/design/) - design docs for swarm orchestration, plaza
+  boards, and Web integration
+- [backend/README.md](backend/README.md) - backend implementation details
 
-Before publishing a public release, add a repository `LICENSE` file and align it
-with the license declared in package metadata and docs.
+## License
+
+MIT
