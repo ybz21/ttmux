@@ -552,7 +552,7 @@ function TerminalPane(props: {
   onRename: (oldName: string, newName: string) => void
 }) {
   const { terms, active, setActive, closeTerm, fontSize, setFontSize, statusMap, setStatus, termRefs, sendKey, onCollapse, claudeMap, claudeView, setClaudeView, codexMap, codexView, setCodexView, onRename } = props
-  const { message } = AntApp.useApp()
+  const { message, modal } = AntApp.useApp()
   const { t } = useI18n()
   const st = active ? statusMap[active] : undefined
   const [termNeedsInput, setTermNeedsInput] = useState<Record<string, boolean>>({})
@@ -948,24 +948,30 @@ function TerminalPane(props: {
         </div>
       )}
 
-      {isTouch && !inChat && (prefsData.quickCommands || []).length > 0 && (
-        <div style={{ display: 'flex', gap: 4, padding: '4px 8px 0', flexWrap: 'wrap' }}>
-          {prefsData.quickCommands.map((cmd) => (
-            <Tag key={cmd} style={{ cursor: 'pointer', margin: 0, fontSize: 12 }}
-              color="blue" onMouseDown={noBlur} onClick={() => setLine(cmd)}>
-              {cmd}
-            </Tag>
-          ))}
-        </div>
-      )}
-
       {/* 快捷键栏：对话视图下隐藏（聊天 UI 不需要终端控制键，且避免与其输入区挤占） */}
       {!inChat && (
         <div style={{ display: 'flex', gap: 6, padding: 8, borderTop: '1px solid var(--border)', overflowX: 'auto' }}>
           <Button type="primary" onMouseDown={noBlur} onClick={() => (isTouch ? submitLine() : sendKey('\r'))}>Enter</Button>
+          {(prefsData.quickCommands || []).map((cmd) => (
+            <Button key={cmd} onMouseDown={noBlur} onClick={() => isTouch ? setLine(cmd) : sendRaw(cmd)} style={{ flex: '0 0 auto' }}>{cmd}</Button>
+          ))}
           {KEYS.map(([label, seq]) => (
             <Button key={label} onMouseDown={noBlur} onClick={() => tapKey(seq)} style={{ flex: '0 0 auto' }}>{label}</Button>
           ))}
+          <Button onMouseDown={noBlur} style={{ flex: '0 0 auto', borderStyle: 'dashed' }} onClick={() => {
+            let val = ''
+            modal.confirm({
+              title: t('settings.quickCommands'),
+              content: <Input placeholder={t('settings.quickCommandPlaceholder')} onChange={(e) => (val = e.target.value)} autoFocus />,
+              okText: t('file.create'),
+              onOk: () => {
+                const v = val.trim()
+                if (!v) return
+                if ((prefsData.quickCommands || []).includes(v)) return
+                savePreferences({ quickCommands: [...(prefsData.quickCommands || []), v] })
+              },
+            })
+          }}>{t('quickCmd.add')}</Button>
         </div>
       )}
     </div>

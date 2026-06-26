@@ -559,6 +559,7 @@ const enUS = {
   'settings.tabEnv': 'Environment',
   'settings.agentCommands': 'Agent Commands',
   'settings.agentCommandsHelp': 'Customize the shell commands used to launch Claude Code and Codex. For example, use "cc -w" instead of "claude".',
+  'quickCmd.add': 'Add shortcut',
   'settings.quickCommands': 'Quick Commands',
   'settings.quickCommandsHelp': 'Custom shortcut buttons for the mobile terminal input. Tap to fill in.',
   'settings.quickCommandPlaceholder': 'Enter command, e.g. git status',
