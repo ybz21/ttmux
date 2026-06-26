@@ -540,8 +540,6 @@ function SoloTerminal({ name }: { name: string }) {
   )
 }
 
-const PROMPT_OFF_KEY = 'ttmux-prompt-popup-off' // 弹框提醒按会话名记忆的本地存储键
-
 // ── 终端面板（多标签 + 工具栏 + 快捷键栏），桌面右栏与手机覆盖层共用 ──
 function TerminalPane(props: {
   terms: string[]; active: string | null; setActive: (n: string) => void; closeTerm: (n: string) => void
@@ -577,22 +575,15 @@ function TerminalPane(props: {
   const tapKey = (seq: string) => { flushLine(); if (isTouch) sendRaw(seq); else sendKey(seq) } // 控制键：先 flush 待发文本
   const noBlur = isTouch ? (e: React.MouseEvent) => e.preventDefault() : undefined        // 点按钮不夺走输入框焦点（软键盘保持）
 
-  // 弹框提醒开关：按会话名记忆是否关闭 PromptDialog 自动弹框（仍可在底部面板手动响应）。
+  // 弹框提醒全局开关
   const [prefsData] = usePreferences()
-  const [promptOff, setPromptOff] = useState<Record<string, boolean>>(() => {
-    try { return JSON.parse(localStorage.getItem(PROMPT_OFF_KEY) || '{}') } catch { return {} }
-  })
-  useEffect(() => {
-    if (prefsData.promptPopupOff && Object.keys(prefsData.promptPopupOff).length > 0) setPromptOff(prefsData.promptPopupOff)
-  }, [prefsData.promptPopupOff])
-  const togglePromptOff = () => {
-    if (!active) return
-    setPromptOff((m) => {
-      const next = { ...m, [active]: !m[active] }
-      savePreferences({ promptPopupOff: next })
-      try { localStorage.setItem(PROMPT_OFF_KEY, JSON.stringify(next)) } catch {}
-      return next
-    })
+  const promptOff = !!prefsData.promptPopupOff
+  const togglePromptOff = () => savePreferences({ promptPopupOff: !promptOff })
+
+  const showVoice = prefsData.showVoiceButton !== false
+  const setShowVoice = (v: boolean | ((prev: boolean) => boolean)) => {
+    const next = typeof v === 'function' ? v(showVoice) : v
+    savePreferences({ showVoiceButton: next })
   }
 
   // 文件侧栏（终端视图下也可用）：定位到当前会话的工作目录
@@ -782,7 +773,7 @@ function TerminalPane(props: {
     // paddingBottom=env(keyboard-inset-height)：软键盘悬浮覆盖时(见 main.tsx/index.html)，
     // 把整块内容抬到键盘之上，让底部输入条/快捷键栏不被遮住。桌面无虚拟键盘 → 0，无影响。
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, paddingBottom: 'env(keyboard-inset-height, 0px)', transition: 'padding-bottom .15s ease-out' }}>
-      {active && <PromptDialog name={active} accent={codexMap[active]?.running ? '#10a37f' : '#58a6ff'} enabled={!inChat && !promptOff[active]} />}
+      {active && <PromptDialog name={active} accent={codexMap[active]?.running ? '#10a37f' : '#58a6ff'} enabled={!inChat && !promptOff} />}
       <Modal
         open={pasteOpen}
         title={t('terminal.pasteTitle')}
@@ -870,12 +861,10 @@ function TerminalPane(props: {
         {active && (
           <Button size="small" onClick={() => setRenameSession(active)}>{t('session.rename')}</Button>
         )}
-        {active && (
-          <Tooltip title={promptOff[active] ? t('prompt.popupOff') : t('prompt.popupOn')}>
-            <Button size="small" type={promptOff[active] ? 'default' : 'primary'} ghost={!promptOff[active]}
-              onClick={togglePromptOff}>{promptOff[active] ? '🔕' : '🔔'} {t('prompt.popup')}</Button>
-          </Tooltip>
-        )}
+        <Tooltip title={promptOff ? t('prompt.popupOff') : t('prompt.popupOn')}>
+          <Button size="small" type={promptOff ? 'default' : 'primary'} ghost={!promptOff}
+            onClick={togglePromptOff}>{promptOff ? '🔕' : '🔔'} {t('prompt.popup')}</Button>
+        </Tooltip>
         <Tooltip title={t('terminal.fileBrowserTitle')}>
           <Button size="small" type={showFiles ? 'primary' : 'default'} onClick={toggleFiles}>📁 {t('chat.files')}</Button>
         </Tooltip>
@@ -884,6 +873,9 @@ function TerminalPane(props: {
             icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: '-2px' }}><circle cx="6" cy="6" r="2.3" /><circle cx="6" cy="18" r="2.3" /><circle cx="18" cy="8" r="2.3" /><path d="M6 8.3v7.4" /><path d="M18 10.3a6 6 0 0 1-6 6H8.3" /></svg>}>
             {t('git.title')}
           </Button>
+        </Tooltip>
+        <Tooltip title={showVoice ? t('voice.hideButton') : t('voice.showButton')}>
+          <Button size="small" type={showVoice ? 'primary' : 'default'} onClick={() => setShowVoice((v) => !v)}>🎤</Button>
         </Tooltip>
         <span style={{ flex: 1 }} />
         <Tooltip title={t('terminal.scrollHistory')}><Button size="small" onClick={() => active && termRefs.current[active]?.scroll(-12)}>▲</Button></Tooltip>
@@ -925,7 +917,7 @@ function TerminalPane(props: {
                 </div>
               )}
               {/* 终端页右下角悬浮语音按钮：识别后字面量打进 pane，用户复查后自行回车（对话视图打开时由其自带按钮接管） */}
-              {!claudeView[termName] && !codexView[termName] && (
+              {showVoice && !claudeView[termName] && !codexView[termName] && (
                 <VoiceInput accent="#58a6ff" onResult={(text) => { api('POST', `/sessions/${encodeURIComponent(termName)}/type`, { text }).catch((e: any) => message.error(e.message)) }} />
               )}
             </div>
@@ -953,6 +945,17 @@ function TerminalPane(props: {
             autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
           />
           <Button type="primary" onMouseDown={noBlur} onClick={submitLine}>{t('common.send')}</Button>
+        </div>
+      )}
+
+      {isTouch && !inChat && (prefsData.quickCommands || []).length > 0 && (
+        <div style={{ display: 'flex', gap: 4, padding: '4px 8px 0', flexWrap: 'wrap' }}>
+          {prefsData.quickCommands.map((cmd) => (
+            <Tag key={cmd} style={{ cursor: 'pointer', margin: 0, fontSize: 12 }}
+              color="blue" onMouseDown={noBlur} onClick={() => setLine(cmd)}>
+              {cmd}
+            </Tag>
+          ))}
         </div>
       )}
 
@@ -1300,7 +1303,20 @@ function NewSessionModal({ open, onClose, onDone }: { open: boolean; onClose: ()
               placeholder={t('session.dirPlaceholder')} />
             <Button onClick={() => setPick(true)}>{t('common.browse')}</Button>
           </Space.Compact>
-          <Radio.Group value={agent} onChange={(e) => setAgent(e.target.value)} optionType="button" buttonStyle="solid">
+          {recentDirs().length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {recentDirs().map((d) => (
+                <Tooltip key={d} title={d}>
+                  <Tag color={d === dir ? 'blue' : undefined} style={{ cursor: 'pointer', margin: 0, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}
+                    onClick={() => setDir(d)}>
+                    {d.split('/').filter(Boolean).pop() || d}
+                  </Tag>
+                </Tooltip>
+              ))}
+            </div>
+          )}
+          <Radio.Group value={agent} onChange={(e) => setAgent(e.target.value)} optionType="button" buttonStyle="solid"
+            style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
             <Radio.Button value="none">{t('session.agentNone')}</Radio.Button>
             <Radio.Button value="claude">{t('session.agentClaude')}</Radio.Button>
             <Radio.Button value="codex">{t('session.agentCodex')}</Radio.Button>
@@ -1524,31 +1540,79 @@ function AgentCommandsCard() {
   )
 }
 
+function PromptPopupCard() {
+  const { t } = useI18n()
+  const [prefs, setPrefs] = usePreferences()
+  return (
+    <Card title={t('settings.promptPopupDefault')}>
+      <Space align="center" wrap>
+        <Switch checked={!prefs.promptPopupOff} onChange={(on) => setPrefs({ promptPopupOff: !on })} />
+        <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>{t('settings.promptPopupDefaultHelp')}</span>
+      </Space>
+    </Card>
+  )
+}
+
+function QuickCommandsCard() {
+  const { message } = AntApp.useApp()
+  const { t } = useI18n()
+  const [prefs, setPrefs] = usePreferences()
+  const [cmds, setCmds] = useState<string[]>(prefs.quickCommands || [])
+  const [draft, setDraft] = useState('')
+  useEffect(() => { setCmds(prefs.quickCommands || []) }, [prefs.quickCommands])
+  const save = (next: string[]) => { setCmds(next); setPrefs({ quickCommands: next }); message.success(t('settings.saved')) }
+  const add = () => { const v = draft.trim(); if (!v || cmds.includes(v)) return; save([...cmds, v]); setDraft('') }
+  const remove = (i: number) => save(cmds.filter((_, j) => j !== i))
+  return (
+    <Card title={t('settings.quickCommands')}>
+      <Space direction="vertical" size="small" style={{ width: '100%', maxWidth: 520 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {cmds.map((cmd, i) => (
+            <Tag key={i} closable onClose={() => remove(i)} color="blue" style={{ margin: 0 }}>{cmd}</Tag>
+          ))}
+        </div>
+        <Space.Compact style={{ width: '100%' }}>
+          <Input value={draft} onChange={(e) => setDraft(e.target.value)}
+            onPressEnter={add} placeholder={t('settings.quickCommandPlaceholder')} />
+          <Button type="primary" onClick={add}>+</Button>
+        </Space.Compact>
+        <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>{t('settings.quickCommandsHelp')}</span>
+      </Space>
+    </Card>
+  )
+}
+
 // ── 偏好同步概览 ──
 function PreferencesOverview() {
   const { t } = useI18n()
   const [prefs] = usePreferences()
-  const items: { key: string; label: string; value: string }[] = [
-    { key: 'theme', label: 'theme', value: prefs.theme || 'dark' },
-    { key: 'locale', label: 'locale', value: prefs.locale || 'zh-CN' },
-    { key: 'browserQuality', label: 'browserQuality', value: prefs.browserQuality || 'auto' },
-    { key: 'browserDevice', label: 'browserDevice', value: prefs.browserDevice || '(desktop)' },
-    { key: 'browserRotate', label: 'browserRotate', value: prefs.browserRotate || '0' },
-    { key: 'claudeCommand', label: 'claudeCommand', value: prefs.claudeCommand || 'claude' },
-    { key: 'codexCommand', label: 'codexCommand', value: prefs.codexCommand || 'codex' },
-    { key: 'recentDirs', label: 'recentDirs', value: (prefs.recentDirs || []).join(', ') || '(empty)' },
-    { key: 'promptPopupOff', label: 'promptPopupOff', value: JSON.stringify(prefs.promptPopupOff || {}) },
-    { key: '_migrated', label: '_migrated', value: String(prefs._migrated ?? false) },
+  const items: { key: string; value: string }[] = [
+    { key: 'theme', value: prefs.theme || 'dark' },
+    { key: 'locale', value: prefs.locale || 'zh-CN' },
+    { key: 'browserQuality', value: prefs.browserQuality || 'auto' },
+    { key: 'browserDevice', value: prefs.browserDevice || '(desktop)' },
+    { key: 'browserRotate', value: prefs.browserRotate || '0' },
+    { key: 'claudeCommand', value: prefs.claudeCommand || 'claude' },
+    { key: 'codexCommand', value: prefs.codexCommand || 'codex' },
+    { key: 'quickCommands', value: (prefs.quickCommands || []).join(', ') || '(empty)' },
+    { key: 'showVoiceButton', value: String(prefs.showVoiceButton !== false) },
+    { key: 'recentDirs', value: (prefs.recentDirs || []).join(', ') || '(empty)' },
+    { key: 'promptPopupOff', value: String(!!prefs.promptPopupOff) },
+    { key: '_migrated', value: String(prefs._migrated ?? false) },
   ]
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
       <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>{t('settings.prefsOverviewHelp')}</span>
       <Descriptions bordered size="small" column={1}>
-        {items.map((it) => (
-          <Descriptions.Item key={it.key} label={<code>{it.label}</code>}>
+        {items.map((it) => {
+          const label = t(`prefs.${it.key}`)
+          const translated = label !== `prefs.${it.key}`
+          return (
+          <Descriptions.Item key={it.key} label={<code>{translated ? `${label} (${it.key})` : it.key}</code>}>
             <code style={{ color: 'var(--text-dim)', wordBreak: 'break-all' }}>{it.value}</code>
           </Descriptions.Item>
-        ))}
+          )
+        })}
       </Descriptions>
     </Space>
   )
@@ -1610,6 +1674,8 @@ function EnvPage() {
             </Space>
           </Card>
           <AgentCommandsCard />
+          <QuickCommandsCard />
+          <PromptPopupCard />
           <Card title={t('install.settingsTitle')}>
             <Space align="center" wrap>
               {pwaInstalled
