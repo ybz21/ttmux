@@ -172,6 +172,7 @@ function NewSwarmModal({ open, onClose, onDone }: { open: boolean; onClose: () =
   }
   const ok = async () => {
     if (!name.trim()) return message.error(t('swarm.nameRequired'))
+    if (/[\/\.:]/.test(name.trim())) return message.error(t('session.nameInvalidChars'))
     if (files.length && !dir.trim()) return message.error(t('swarm.dirRequiredForUpload'))
     setBusy(true)
     try {

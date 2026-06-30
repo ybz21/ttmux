@@ -127,6 +127,7 @@ const enUS = {
   'session.renameTitle': 'Rename session',
   'session.renamed': 'Renamed',
   'session.nameRequired': 'Enter a name',
+  'session.nameInvalidChars': 'Session name cannot contain / . : characters',
   'session.created': 'Created',
   'session.namePlaceholder': 'Session name, e.g. work',
   'session.agentNone': 'No agent',
