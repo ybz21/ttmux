@@ -73,7 +73,12 @@ func (r Runtime) HasSession(name string) bool {
 
 // Sessions returns all tmux session names (unfiltered).
 func (r Runtime) Sessions() []string {
-	out, _ := r.TmuxOutput("list-sessions", "-F", "#{session_name}")
+	out, err := r.TmuxOutput("list-sessions", "-F", "#{session_name}")
+	if err != nil {
+		// tmux server 未启动时 list-sessions 非零退出，此时输出是 stderr 的
+		// 错误文本（如 "no server running ..."），不能按行当会话名解析
+		return nil
+	}
 	var names []string
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if line = strings.TrimSpace(line); line != "" {
