@@ -26,6 +26,30 @@ function xtermTheme() {
   return { background: bg, foreground: fg, cursor: '#58a6ff' }
 }
 
+// 滤掉应用(Claude Code/Codex/vim 等)开启「鼠标上报」的 DECSET 序列 ESC[?1000/1001/1002/1003h。
+// 否则 xterm 会把鼠标事件转发给应用，本地拖选失效 → 选不中文本、无法复制。
+// 只滤显示流：应用自身仍以为鼠标开着，后端合成的滚轮(sendScroll)不受影响。
+// 字节级处理，不解码，避免拆断跨帧的多字节 UTF-8。
+const MOUSE_ON = new Set(['1000', '1001', '1002', '1003'])
+function stripMouseEnableBytes(buf: Uint8Array): Uint8Array {
+  let hit = false
+  for (let i = 0; i + 3 < buf.length; i++) {
+    if (buf[i] === 0x1b && buf[i + 1] === 0x5b && buf[i + 2] === 0x3f) { hit = true; break }
+  }
+  if (!hit) return buf // 常见情况：无 ESC[? 直接原样返回，零拷贝
+  const out: number[] = []
+  for (let i = 0; i < buf.length; i++) {
+    if (buf[i] === 0x1b && buf[i + 1] === 0x5b && buf[i + 2] === 0x3f) {
+      let j = i + 3, num = ''
+      while (j < buf.length && buf[j] >= 0x30 && buf[j] <= 0x39) { num += String.fromCharCode(buf[j]); j++ }
+      if (j < buf.length && buf[j] === 0x68 /* 'h' */ && MOUSE_ON.has(num)) { i = j; continue } // 跳过整段
+    }
+    out.push(buf[i])
+  }
+  return new Uint8Array(out)
+}
+const stripMouseEnableStr = (s: string) => s.replace(/\x1b\[\?(?:1000|1001|1002|1003)h/g, '')
+
 // 跨 http（局域网非安全上下文）也能用的复制
 function copyText(s: string) {
   if (navigator.clipboard && window.isSecureContext) {
@@ -104,8 +128,8 @@ const Term = forwardRef<TermHandle, {
     ws.onmessage = (e) => {
       const t = termRef.current
       if (!t) return
-      if (typeof e.data === 'string') t.write(e.data)
-      else t.write(new Uint8Array(e.data as ArrayBuffer))
+      if (typeof e.data === 'string') t.write(stripMouseEnableStr(e.data))
+      else t.write(stripMouseEnableBytes(new Uint8Array(e.data as ArrayBuffer)))
     }
     ws.onclose = () => {
       onStatus?.('closed')
